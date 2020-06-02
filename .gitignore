@@ -32,3 +32,7 @@
 *.app
 
 projects/sentifer_memnager/.vs/
+
+projects/sentifer_memnager/x64/
+
+projects/sentifer_memnager/example/x64/

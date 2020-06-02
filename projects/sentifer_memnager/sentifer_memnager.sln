@@ -5,6 +5,8 @@ VisualStudioVersion = 16.0.30011.22
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sentifer_memnager", "sentifer_memnager.vcxproj", "{396CE891-2E77-4672-B2AC-0CF4DC12C610}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "example", "example\example.vcxproj", "{E0FE86E3-E646-42B3-87E6-39D4521551EA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -21,6 +23,14 @@ Global
 		{396CE891-2E77-4672-B2AC-0CF4DC12C610}.Release|x64.Build.0 = Release|x64
 		{396CE891-2E77-4672-B2AC-0CF4DC12C610}.Release|x86.ActiveCfg = Release|Win32
 		{396CE891-2E77-4672-B2AC-0CF4DC12C610}.Release|x86.Build.0 = Release|Win32
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Debug|x64.ActiveCfg = Debug|x64
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Debug|x64.Build.0 = Debug|x64
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Debug|x86.ActiveCfg = Debug|Win32
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Debug|x86.Build.0 = Debug|Win32
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Release|x64.ActiveCfg = Release|x64
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Release|x64.Build.0 = Release|x64
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Release|x86.ActiveCfg = Release|Win32
+		{E0FE86E3-E646-42B3-87E6-39D4521551EA}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
