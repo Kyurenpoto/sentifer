@@ -10,6 +10,8 @@
 #include <array>
 #include <memory_resource>
 
+#include "wil/resource.h"
+
 namespace memnager
 {
     template<size_t Alignment>
@@ -23,17 +25,22 @@ namespace memnager
         }
     };
 
+    namespace
+    {
+        constexpr size_t MaxAlign = 8192;
+    }
+
     template<size_t BlockSize>
-    struct alignas(BlockSize) MemBlock
+    struct alignas(BlockSize < MaxAlign ? BlockSize : MaxAlign) MemBlock
     {
         std::array<std::byte, BlockSize> memory;
     };
 
     namespace
     {
-        static constexpr size_t PageSize = 4096;
-        static constexpr size_t CacheLineSize = 64;
-        static constexpr size_t AllocUnitSize = PageSize * 1024;
+        constexpr size_t PageSize = 4096;
+        constexpr size_t CacheLineSize = 64;
+        constexpr size_t AllocUnitSize = PageSize * 1024;
 
         using Page = MemBlock<PageSize>;
         using CacheLine = MemBlock<CacheLineSize>;
@@ -57,7 +64,7 @@ namespace memnager
         using MemBlockAlignedPtr = AlignedPtr<alignof(MemBlockType)>;
 
     private:
-        static constexpr size_t NodeArrayCnt = alignof(DependentMemBlockType) / alignof(MemBlockType);
+        static constexpr size_t NodeArrayCnt = sizeof(DependentMemBlockType) / sizeof(MemBlockType);
 
         union alignas(alignof(MemBlockType)) Node
         {
