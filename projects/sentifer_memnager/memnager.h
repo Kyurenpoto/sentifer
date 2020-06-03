@@ -8,23 +8,23 @@
 
 #include <cstddef>
 #include <array>
-#include <variant>
+#include <memory_resource>
 
 namespace memnager
 {
-    template<size_t power>
+    template<size_t Alignment>
     struct AlignedPtr final
     {
         void* ptr = nullptr;
 
         bool isValid()
         {
-            return reinterpret_cast<size_t>(ptr) % (1 << power) == 0;
+            return reinterpret_cast<size_t>(ptr) % Alignment == 0;
         }
     };
 
     template<size_t BlockSize>
-    struct MemBlock
+    struct alignas(BlockSize) MemBlock
     {
         std::array<std::byte, BlockSize> memory;
     };
@@ -33,73 +33,101 @@ namespace memnager
     {
         static constexpr size_t PageSize = 4096;
         static constexpr size_t CacheLineSize = 64;
+        static constexpr size_t AllocUnitSize = PageSize * 1024;
 
         using Page = MemBlock<PageSize>;
         using CacheLine = MemBlock<CacheLineSize>;
+        using AllocUnit = MemBlock<AllocUnitSize>;
+
+        using PageAlignedPtr = AlignedPtr<PageSize>;
+        using CacheAlignedPtr = AlignedPtr<CacheLineSize>;
+        using UnitAlignedPtr = AlignedPtr<AllocUnitSize>;
     }
 
-    class CacheLinePool
+    struct memblock_resource_pool :
+        public std::pmr::memory_resource
     {
-        static constexpr size_t NodeArrayCnt = PageSize / CacheLineSize;
+        virtual void release() = 0;
+        virtual memblock_resource_pool* upstream_resource() const = 0;
+    };
 
-        using CacheAlignedPtr = AlignedPtr<CacheLineSize>;
+    template<class MemBlockType, class DependentMemBlockType>
+    struct DependentMemBlockPool
+    {
+        using MemBlockAlignedPtr = AlignedPtr<alignof(MemBlockType)>;
 
-        using Node = std::variant<CacheLine, CacheAlignedPtr>;
+    private:
+        static constexpr size_t NodeArrayCnt = alignof(DependentMemBlockType) / alignof(MemBlockType);
+
+        union alignas(alignof(MemBlockType)) Node
+        {
+            MemBlockType cacheLine;
+            MemBlockAlignedPtr alignedPtr;
+        };
         using NodeArray = std::array<Node, NodeArrayCnt>;
-        using NodeList = std::variant<Page, NodeArray>;
+        union alignas(alignof(DependentMemBlockType)) NodeList
+        {
+            DependentMemBlockType page;
+            NodeArray nodeArray;
+        };
 
     public:
-        CacheLinePool(Page* page)
+        DependentMemBlockPool(DependentMemBlockType* memBlock)
         {
-            if (page == nullptr)
+            initNodes(memBlock);
+        }
+
+        MemBlockAlignedPtr allocChunk()
+        {
+            if (!stack)
+                return MemBlockAlignedPtr{ .ptr = nullptr };
+
+            Node* top = stack;
+            stack = static_cast<Node*>(top->alignedPtr.ptr);
+
+            return MemBlockAlignedPtr{ .ptr = static_cast<void*>(top) };
+        }
+
+        void freeChunk(MemBlockAlignedPtr alignedPtr)
+        {
+            Node* top = static_cast<Node*>(alignedPtr.ptr);
+            top->alignedPtr.ptr = static_cast<void*>(stack);
+            stack = top;
+        }
+
+    private:
+        void initNodes(DependentMemBlockType* memBlock)
+        {
+            if (memBlock == nullptr)
             {
-                assert(page != nullptr);
+                assert(memBlock != nullptr);
 
                 return;
             }
 
-            nodes = static_cast<NodeList*>(static_cast<void*>(page));
+            nodes = static_cast<NodeList*>(static_cast<void*>(memBlock));
 
             Node* prevNode = nullptr;
 
             for (size_t i = 0; i < NodeArrayCnt; ++i)
             {
-                Node& newStack = std::get<NodeArray>(*nodes)[i];
-                CacheAlignedPtr& link = std::get<CacheAlignedPtr>(newStack);
-                link.ptr = static_cast<void*>(prevNode);
-                prevNode = static_cast<Node*>(link.ptr);
+                Node& newStack = nodes->nodeArray[i];
+                newStack.alignedPtr.ptr = static_cast<void*>(prevNode);
+                prevNode = static_cast<Node*>(newStack.alignedPtr.ptr);
             }
 
             stack = prevNode;
         }
 
-        CacheAlignedPtr allocChunk()
-        {
-            if (!stack)
-                return CacheAlignedPtr{};
-
-            Node* top = stack;
-            CacheAlignedPtr& link = std::get<CacheAlignedPtr>(*top);
-            stack = static_cast<Node*>(link.ptr);
-
-            CacheAlignedPtr chunk;
-            chunk.ptr = static_cast<void*>(top);
-
-            return chunk;
-        }
-
-        void freeChunk(CacheAlignedPtr ptr)
-        {
-            Node* top = static_cast<Node*>(ptr.ptr);
-            CacheAlignedPtr& link = std::get<CacheAlignedPtr>(*top);
-            link.ptr = static_cast<void*>(stack);
-            stack = top;
-        }
-
-    private:
         Node* stack = nullptr;
-        NodeList *nodes = nullptr;
+        NodeList* nodes = nullptr;
     };
+
+    namespace
+    {
+        using PagePool = DependentMemBlockPool<Page, AllocUnit>;
+        using CacheLinePool = DependentMemBlockPool<CacheLine, Page>;
+    }
 
     void init(size_t nArena = 4);
 }
