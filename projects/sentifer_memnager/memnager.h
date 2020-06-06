@@ -8,47 +8,63 @@
 
 #include <cstddef>
 #include <array>
+#include <vector>
 #include <memory_resource>
 
-#include "wil/resource.h"
+//#include "wil/resource.h"
 
 namespace memnager
 {
-    template<size_t Alignment>
-    struct AlignedPtr final
+    inline namespace utils
     {
-        void* ptr = nullptr;
-
-        bool isValid()
+        template<class To, class From>
+        To* force_ptr_cast(From* ptr)
         {
-            return reinterpret_cast<size_t>(ptr) % Alignment == 0;
+            return static_cast<To*>(static_cast<void*>(ptr));
         }
-    };
-
-    namespace
-    {
-        constexpr size_t MaxAlign = 8192;
     }
 
-    template<size_t BlockSize>
-    struct alignas(BlockSize < MaxAlign ? BlockSize : MaxAlign) MemBlock
+    inline namespace mem_block
     {
-        std::array<std::byte, BlockSize> memory;
-    };
+        constexpr size_t MaxAlign = 8192;
 
-    namespace
+        template<size_t BlockSize>
+        struct alignas(BlockSize < MaxAlign ? BlockSize : MaxAlign) MemBlock
+        {
+            std::array<std::byte, BlockSize> memory;
+        };
+
+        inline namespace instanced_mem_block
+        {
+            constexpr size_t PageSize = 4096;
+            constexpr size_t CacheLineSize = 64;
+            constexpr size_t AllocUnitSize = PageSize * 1024;
+
+            using Page = MemBlock<PageSize>;
+            using CacheLine = MemBlock<CacheLineSize>;
+            using AllocUnit = MemBlock<AllocUnitSize>;
+        }
+    }
+
+    inline namespace aligned_ptr
     {
-        constexpr size_t PageSize = 4096;
-        constexpr size_t CacheLineSize = 64;
-        constexpr size_t AllocUnitSize = PageSize * 1024;
+        template<class MemBlockType>
+        struct AlignedPtr final
+        {
+            MemBlockType* ptr = nullptr;
 
-        using Page = MemBlock<PageSize>;
-        using CacheLine = MemBlock<CacheLineSize>;
-        using AllocUnit = MemBlock<AllocUnitSize>;
+            bool isValid()
+            {
+                return reinterpret_cast<size_t>(ptr) % alignof(MemBlockType) == 0;
+            }
+        };
 
-        using PageAlignedPtr = AlignedPtr<PageSize>;
-        using CacheAlignedPtr = AlignedPtr<CacheLineSize>;
-        using UnitAlignedPtr = AlignedPtr<AllocUnitSize>;
+        inline namespace instanced_aligned_ptr
+        {
+            using PageAlignedPtr = AlignedPtr<Page>;
+            using CacheAlignedPtr = AlignedPtr<CacheLine>;
+            using UnitAlignedPtr = AlignedPtr<AllocUnit>;
+        }
     }
 
     struct memblock_resource_pool :
@@ -58,79 +74,95 @@ namespace memnager
         virtual memblock_resource_pool* upstream_resource() const = 0;
     };
 
-    template<class MemBlockType, class DependentMemBlockType>
+    template<class MemBlockType, class HyperMemBlockType>
     struct DependentMemBlockPool
     {
-        using MemBlockAlignedPtr = AlignedPtr<alignof(MemBlockType)>;
+        using MemBlockAlignedPtr = AlignedPtr<MemBlockType>;
+        using HyperMemBlockAlignedPtr = AlignedPtr<HyperMemBlockType>;
 
     private:
-        static constexpr size_t NodeArrayCnt = sizeof(DependentMemBlockType) / sizeof(MemBlockType);
+        static constexpr size_t NodeArrayCnt = sizeof(HyperMemBlockType) / sizeof(MemBlockType);
 
         union alignas(alignof(MemBlockType)) Node
         {
-            MemBlockType cacheLine;
-            MemBlockAlignedPtr alignedPtr;
+            MemBlockType memBlock;
+            Node* prevNode;
         };
         using NodeArray = std::array<Node, NodeArrayCnt>;
-        union alignas(alignof(DependentMemBlockType)) NodeList
-        {
-            DependentMemBlockType page;
-            NodeArray nodeArray;
-        };
+        using HyperNodePtrArray = std::vector<HyperMemBlockAlignedPtr>;
 
     public:
-        DependentMemBlockPool(DependentMemBlockType* memBlock)
+        DependentMemBlockPool()
         {
-            initNodes(memBlock);
+        }
+
+        ~DependentMemBlockPool()
+        {
+            for (auto& hyperNode : hyperNodes)
+            {
+                delete hyperNode.ptr;
+            }
         }
 
         MemBlockAlignedPtr allocChunk()
         {
-            if (!stack)
+            if (!stack && !grow())
                 return MemBlockAlignedPtr{ .ptr = nullptr };
 
-            Node* top = stack;
-            stack = static_cast<Node*>(top->alignedPtr.ptr);
+            MemBlockAlignedPtr top{ .ptr = &stack->memBlock };
+            stack = stack->prevNode;
 
-            return MemBlockAlignedPtr{ .ptr = static_cast<void*>(top) };
+            return top;
         }
 
         void freeChunk(MemBlockAlignedPtr alignedPtr)
         {
-            Node* top = static_cast<Node*>(alignedPtr.ptr);
-            top->alignedPtr.ptr = static_cast<void*>(stack);
-            stack = top;
+            MemBlockAlignedPtr top = alignedPtr;
+            top.ptr = &stack->memBlock;
+            stack = force_ptr_cast<Node>(top.ptr);
         }
 
     private:
-        void initNodes(DependentMemBlockType* memBlock)
+        bool grow()
         {
-            if (memBlock == nullptr)
+            HyperMemBlockAlignedPtr newHyperMemBlock{ .ptr = new HyperMemBlockType };
+            if (!newHyperMemBlock.ptr)
+                return false;
+
+            initNodes(newHyperMemBlock);
+            hyperNodes.push_back(newHyperMemBlock);
+
+            return false;
+        }
+
+        void initNodes(HyperMemBlockAlignedPtr hyperMemBlock)
+        {
+            if (hyperMemBlock.ptr == nullptr)
             {
-                assert(memBlock != nullptr);
+                assert(hyperMemBlock.ptr != nullptr);
 
                 return;
             }
 
-            nodes = static_cast<NodeList*>(static_cast<void*>(memBlock));
+            NodeArray& nodes = *force_ptr_cast<NodeArray>(hyperMemBlock.ptr);
 
             Node* prevNode = nullptr;
 
             for (size_t i = 0; i < NodeArrayCnt; ++i)
             {
-                Node& newStack = nodes->nodeArray[i];
-                newStack.alignedPtr.ptr = static_cast<void*>(prevNode);
-                prevNode = static_cast<Node*>(newStack.alignedPtr.ptr);
+                Node& newStack = nodes[i];
+                newStack.prevNode = prevNode;
+                prevNode = &newStack;
             }
 
             stack = prevNode;
         }
 
         Node* stack = nullptr;
-        NodeList* nodes = nullptr;
+        HyperNodePtrArray hyperNodes;
     };
 
-    namespace
+    inline namespace
     {
         using PagePool = DependentMemBlockPool<Page, AllocUnit>;
         using CacheLinePool = DependentMemBlockPool<CacheLine, Page>;
