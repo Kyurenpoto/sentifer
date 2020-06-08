@@ -10,6 +10,8 @@
 #include <array>
 #include <vector>
 #include <memory_resource>
+#include <concepts>
+#include <span>
 
 //#include "wil/resource.h"
 
@@ -57,6 +59,18 @@ namespace memnager
             using CacheLine = MemBlock<CacheLineSize>;
             using AllocUnit = MemBlock<AllocUnitSize>;
         }
+
+        inline namespace segments
+        {
+            template<size_t N>
+            using micro_segment = MemBlock<(1 << N)>;
+            template<size_t N>
+            using cacheline_segment = std::array<CacheLine, N>;
+            template<size_t N>
+            using page_segment = std::array<Page, N>;
+            template<size_t N>
+            using macro_segment = std::array<Page, N>;
+        }
     }
 
     inline namespace aligned_ptr
@@ -80,10 +94,10 @@ namespace memnager
         }
     }
 
-    struct memblock_resource_pool :
+    struct memblock_pool_resource :
         public std::pmr::memory_resource
     {
-        virtual ~memblock_resource_pool()
+        virtual ~memblock_pool_resource()
         {
             release();
         }
@@ -100,10 +114,10 @@ namespace memnager
         std::pmr::memory_resource* upstream = nullptr;
     };
 
-    inline namespace
+    inline namespace resources
     {
-        struct limited_pool :
-            public memblock_resource_pool
+        struct page_pool_resource :
+            public memblock_pool_resource
         {
         private:
             virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
@@ -122,8 +136,8 @@ namespace memnager
             }
         };
 
-        struct unlimited_pool :
-            public memblock_resource_pool
+        struct cacheline_pool_resource :
+            public memblock_pool_resource
         {
         private:
             virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
@@ -142,8 +156,48 @@ namespace memnager
             }
         };
 
-        struct mem_pool :
-            public memblock_resource_pool
+        struct limited_pool_resource :
+            public memblock_pool_resource
+        {
+        private:
+            virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
+            {
+                return nullptr;
+            }
+
+            virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
+            {
+
+            }
+
+            virtual bool do_is_equal(const std::pmr::memory_resource& other) const noexcept
+            {
+                return this == &other;
+            }
+        };
+
+        struct unlimited_pool_resource :
+            public memblock_pool_resource
+        {
+        private:
+            virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
+            {
+                return nullptr;
+            }
+
+            virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
+            {
+
+            }
+
+            virtual bool do_is_equal(const std::pmr::memory_resource& other) const noexcept
+            {
+                return this == &other;
+            }
+        };
+
+        struct mem_pool_resource :
+            public memblock_pool_resource
         {
         private:
             virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
@@ -165,8 +219,8 @@ namespace memnager
                 return this == &other;
             }
 
-            limited_pool limited;
-            unlimited_pool unlimited;
+            limited_pool_resource limited;
+            unlimited_pool_resource unlimited;
         };
     }
 
