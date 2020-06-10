@@ -44,3 +44,6 @@ projects/sentifer_memnager/example/Debug/
 projects/sentifer_memnager/packages/
 
 projects/sentifer_multi_thread_base/.vs/
+/.vs
+/projects/sentifer_mtbase/.vs
+/projects/sentifer_mtbase/out/build
