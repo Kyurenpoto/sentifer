@@ -8,8 +8,6 @@ endif()
 
 project(example_sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Example for sentifer_mtbase" LANGUAGES CXX)
 
-find_package(mimalloc 1.0 REQUIRED)
-
 add_executable(example_sentifer_mtbase main.cpp)
 target_link_libraries(example_sentifer_mtbase PUBLIC sentifer_mtbase)
 target_include_directories(example_sentifer_mtbase PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)

@@ -47,3 +47,5 @@ projects/sentifer_multi_thread_base/.vs/
 /.vs
 /projects/sentifer_mtbase/.vs
 /projects/sentifer_mtbase/out/build
+
+out/

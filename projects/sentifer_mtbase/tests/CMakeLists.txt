@@ -7,6 +7,3 @@ else()
 endif()
 
 project(test_sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Tests for sentifer_mtbase" LANGUAGES CXX)
-
-find_package(mimalloc 1.0 REQUIRED)
-

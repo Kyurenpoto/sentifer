@@ -12,12 +12,7 @@
       "ctestCommandArgs": "",
       "cmakeExecutable": "C:/Program Files/CMake/bin/cmake.exe",
       "intelliSenseMode": "windows-msvc-x64",
-      "variables": [
-        {
-          "name": "CMAKE_TOOLCHAIN_FILE",
-          "value": "D:/Repos/vcpkg/scripts/buildsystems/vcpkg.cmake"
-        }
-      ]
+      "variables": []
     }
   ]
 }

@@ -1,0 +1,3 @@
+[submodule "submodules/mimalloc"]
+	path = submodules/mimalloc
+	url = https://github.com/microsoft/mimalloc.git
