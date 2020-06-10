@@ -11,7 +11,6 @@ project(sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Nice code base for multi-thre
 find_package(mimalloc 1.0 REQUIRED)
 
 add_library(sentifer_mtbase INTERFACE)
-target_include_directories(sentifer_mtbase INTERFACE include)
 target_compile_features(sentifer_mtbase INTERFACE cxx_std_20)
 
 add_subdirectory(examples)

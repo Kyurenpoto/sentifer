@@ -11,6 +11,7 @@ project(example_sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Example for sentifer_
 find_package(mimalloc 1.0 REQUIRED)
 
 add_executable(example_sentifer_mtbase main.cpp)
-target_link_libraries(example_sentifer_mtbase INTERFACE sentifer_mtbase)
+target_link_libraries(example_sentifer_mtbase PUBLIC sentifer_mtbase)
+target_include_directories(example_sentifer_mtbase PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)
 set_property(TARGET example_sentifer_mtbase PROPERTY CXX_STANDARD_REQUIRED 20)
 set_property(TARGET example_sentifer_mtbase PROPERTY CXX_STANDARD 20)
