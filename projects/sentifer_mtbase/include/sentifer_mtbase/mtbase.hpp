@@ -2,6 +2,8 @@
 
 #include <memory_resource>
 #include <chrono>
+#include <atomic>
+#include <array>
 
 #include "mimalloc.h"
 
@@ -71,9 +73,19 @@ namespace mtbase
             virtual ~clock_base() noexcept
             {}
 
+            std::chrono::nanoseconds nowFromEpoch() noexcept
+            {
+                return Clock::now().time_since_epoch();
+            }
+
+            std::chrono::nanoseconds nowFromStart() noexcept
+            {
+                return nowFromEpoch() - startSinceEpoch;
+            }
+
             std::chrono::nanoseconds nowFromBase() noexcept
             {
-                return now() - baseSinceEpoch;
+                return nowFromEpoch() - baseSinceEpoch;
             }
 
             void setBase(std::chrono::nanoseconds base) noexcept
@@ -84,12 +96,6 @@ namespace mtbase
             void resetBase() noexcept
             {
                 baseSinceEpoch = startSinceEpoch;
-            }
-
-        private:
-            std::chrono::nanoseconds now() noexcept
-            {
-                return Clock::now().time_since_epoch();
             }
 
         private:
@@ -105,5 +111,122 @@ namespace mtbase
             static thread_local thread_local_clock LocalClock;
             static global_clock GlobalClock;
         }
+    }
+
+    inline namespace schedulers
+    {
+        struct alignas(alignof(void*)) task_t
+        {
+
+        };
+
+        template<std::uint32_t Size>
+        struct task_scheduler final
+        {
+            task_scheduler(mi_memory_resource& res) :
+                resource{ res }
+            {}
+
+            ~task_scheduler()
+            {
+                for (auto& ptr : tasks)
+                    if (ptr != nullptr)
+                        resource.deallocate(ptr, sizeof(task_t), alignof(task_t));
+            }
+
+            bool pushFront(task_t* task)
+            {
+                for (int i = 0; i < MAX_RETRY_FAST; ++i)
+                    if (pushFrontFast(task))
+                        return true;
+
+                return pushFrontFast(task);
+            }
+
+            bool pushBack(task_t* task)
+            {
+                for (int i = 0; i < MAX_RETRY_FAST; ++i)
+                    if (pushBackFast(task))
+                        return true;
+
+                return pushBackFast(task);
+            }
+
+            task_t* popFront()
+            {
+                for (int i = 0; i < MAX_RETRY_FAST; ++i)
+                {
+                    task_t* result = popFrontFast();
+                    if (result != nullptr)
+                        return result;
+                }
+
+                return popFrontFast();
+            }
+
+            task_t* popBack()
+            {
+                for (int i = 0; i < MAX_RETRY_FAST; ++i)
+                {
+                    task_t* result = popBackFast();
+                    if (result != nullptr)
+                        return result;
+                }
+
+                return popBackFast();
+            }
+
+        private:
+            enum MODIFY_STATE :
+                std::size_t
+            {
+                MS_NONE = 0
+            };
+
+            bool pushFrontFast(task_t* task)
+            {
+                std::uint64_t oldIndex = index.load();
+                std::uint64_t oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
+                task_t* oldFrontPtr = tasks[oldFront].load();
+            }
+
+            bool pushBackFast(task_t* task);
+            task_t* popFrontFast();
+            task_t* popBackFast();
+
+            bool pushFrontSlow(task_t* task);
+            bool pushBackSlow(task_t* task);
+            task_t* popFrontSlow();
+            task_t* popBackSlow();
+
+            static MODIFY_STATE getModifyState(const task_t* ptr) noexcept
+            {
+                return static_cast<MODIFY_STATE>((reinterpret_cast<std::size_t>(ptr) & MASK_MODIFY_STATE));
+            }
+
+            static void setModifyState(task_t*& ptr, const MODIFY_STATE modifyState) noexcept
+            {
+                ptr = reinterpret_cast<task_t*>(
+                    (reinterpret_cast<std::size_t>(ptr) & MASK_EXCEPT_MODIFY_STATE) &
+                    static_cast<std::size_t>(modifyState)
+                    );
+            }
+
+        private:
+            static constexpr std::uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
+            static constexpr std::uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
+            static constexpr std::uint64_t MASK_INDEX = 0x0000'0000'FFFF'FFFFULL;
+            static constexpr std::uint64_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
+            static constexpr std::uint64_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
+            static constexpr std::uint64_t SHIFT_FRONT = 32;
+            static constexpr std::uint64_t SHIFT_BACK = 0;
+            static constexpr int MAX_RETRY_FAST = 3;
+            std::atomic_uint64_t index;
+            std::array<std::atomic<task_t*>, Size> tasks;
+            mi_memory_resource& resource;
+        };
+
+        static mi_memory_resource res;
+        static task_scheduler<(1 << 20)> tmp(res);
     }
 }
