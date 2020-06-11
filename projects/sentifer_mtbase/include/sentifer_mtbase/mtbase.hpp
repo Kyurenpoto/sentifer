@@ -120,6 +120,42 @@ namespace mtbase
 
         };
 
+        struct tagged_task_t
+        {
+            enum MODIFY_STATE :
+                std::size_t
+            {
+                MS_NONE = 0
+            };
+
+            union
+            {
+                const task_t* ptr;
+                const size_t taggedValue;
+            };
+
+            const MODIFY_STATE getModifyState() const noexcept
+            {
+                return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
+            }
+
+            tagged_task_t changeModifyState(MODIFY_STATE modifyState) const noexcept
+            {
+                return tagged_task_t{ .taggedValue =
+                    ((taggedValue & MASK_EXCEPT_MODIFY_STATE) |
+                    (static_cast<size_t>(modifyState))) };
+            }
+
+            const task_t* getTask() const noexcept
+            {
+                return changeModifyState(MS_NONE).ptr;
+            }
+
+        private:
+            static constexpr std::size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
+            static constexpr std::size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
+        };
+
         template<std::uint32_t Size>
         struct task_scheduler final
         {
@@ -198,19 +234,6 @@ namespace mtbase
             bool pushBackSlow(task_t* task);
             task_t* popFrontSlow();
             task_t* popBackSlow();
-
-            static MODIFY_STATE getModifyState(const task_t* ptr) noexcept
-            {
-                return static_cast<MODIFY_STATE>((reinterpret_cast<std::size_t>(ptr) & MASK_MODIFY_STATE));
-            }
-
-            static void setModifyState(task_t*& ptr, const MODIFY_STATE modifyState) noexcept
-            {
-                ptr = reinterpret_cast<task_t*>(
-                    (reinterpret_cast<std::size_t>(ptr) & MASK_EXCEPT_MODIFY_STATE) &
-                    static_cast<std::size_t>(modifyState)
-                    );
-            }
 
         private:
             static constexpr std::uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
