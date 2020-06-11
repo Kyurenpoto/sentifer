@@ -133,12 +133,23 @@ namespace mtbase
             enum MODIFY_STATE :
                 std::size_t
             {
-                MS_NONE = 0
+                MS_NONE = 0,
+                MS_RESERVE = 1,
             };
 
             MODIFY_STATE getModifyState() const noexcept
             {
                 return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
+            }
+
+            task_t* getTask() const noexcept
+            {
+                return changeModifyState(MS_NONE).ptr;
+            }
+
+            size_t getTaggedValue() const noexcept
+            {
+                return taggedValue;
             }
 
             tagged_task_t changeModifyState(MODIFY_STATE modifyState) const noexcept
@@ -150,9 +161,9 @@ namespace mtbase
                 };
             }
 
-            task_t* getTask() const noexcept
+            tagged_task_t changeTask(task_t* task) const noexcept
             {
-                return changeModifyState(MS_NONE).ptr;
+                return tagged_task_t{ task }.changeModifyState(getModifyState());
             }
 
         private:
@@ -231,12 +242,81 @@ namespace mtbase
             {
                 std::uint64_t oldIndex = index.load();
                 std::uint64_t oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
-                task_t* oldFrontPtr = tasks[oldFront].load();
+                std::uint64_t oldBack = (oldIndex & MASK_BACK) >> SHIFT_BACK;
+
+                if (isFull(oldFront, oldBack))
+                    return false;
+
+                tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
+
+                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE)
+                    return false;
+
+                if (!commitTargetState(
+                    taggedTasks[oldFront],
+                    oldFrontTagged,
+                    tagged_task_t::MS_RESERVE))
+                    return false;
+
+                tagged_task_t newFrontTaggedReserve
+                {
+                    oldFrontTagged
+                    .changeModifyState(tagged_task_t::MS_RESERVE)
+                    .getTaggedValue()
+                };
+
+                if (!commitTask(
+                    taggedTasks[oldFront],
+                    newFrontTaggedReserve, task))
+                {
+                    while (!commitTargetState(
+                        taggedTasks[oldFront],
+                        newFrontTaggedReserve,
+                        tagged_task_t::MS_NONE));
+
+                    return false;
+                }
             }
 
             bool pushBackFast(task_t* task);
             task_t* popFrontFast();
             task_t* popBackFast();
+
+            bool isFull(const std::uint64_t oldPushDir, const std::uint64_t oldPopDir) const noexcept
+            {
+                return (oldPopDir + Size - oldPushDir) % Size == 1;
+            }
+
+            bool isEmpty(const std::uint64_t oldPushDir, const std::uint64_t oldPopDir) const noexcept
+            {
+                return oldPushDir == oldPopDir;
+            }
+
+            bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, tagged_task_t::MODIFY_STATE targetState) noexcept
+            {
+                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
+                std::size_t newTaggedValue =
+                    oldTagged
+                    .changeModifyState(targetState)
+                    .getTaggedValue();
+
+                if (!taggedTask
+                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
+                    return false;
+            }
+
+            bool commitTask(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task) noexcept
+            {
+                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
+                std::size_t newTaggedValue =
+                    oldTagged
+                    .changeTask(task)
+                    .getTaggedValue();
+
+                if (!taggedTask
+                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
+                    return false;
+            }
 
             bool pushFrontSlow(task_t* task);
             bool pushBackSlow(task_t* task);
