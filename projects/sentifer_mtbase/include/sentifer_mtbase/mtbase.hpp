@@ -122,36 +122,46 @@ namespace mtbase
 
         struct tagged_task_t
         {
+            tagged_task_t(task_t* task) :
+                ptr{ task }
+            {}
+
+            tagged_task_t(size_t tagged = 0) :
+                taggedValue{ tagged }
+            {}
+
             enum MODIFY_STATE :
                 std::size_t
             {
                 MS_NONE = 0
             };
 
-            union
-            {
-                const task_t* ptr;
-                const size_t taggedValue;
-            };
-
-            const MODIFY_STATE getModifyState() const noexcept
+            MODIFY_STATE getModifyState() const noexcept
             {
                 return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
             }
 
             tagged_task_t changeModifyState(MODIFY_STATE modifyState) const noexcept
             {
-                return tagged_task_t{ .taggedValue =
+                return tagged_task_t
+                {
                     ((taggedValue & MASK_EXCEPT_MODIFY_STATE) |
-                    (static_cast<size_t>(modifyState))) };
+                    (static_cast<size_t>(modifyState)))
+                };
             }
 
-            const task_t* getTask() const noexcept
+            task_t* getTask() const noexcept
             {
                 return changeModifyState(MS_NONE).ptr;
             }
 
         private:
+            union
+            {
+                task_t* ptr;
+                size_t taggedValue;
+            };
+
             static constexpr std::size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
             static constexpr std::size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
         };
@@ -165,9 +175,13 @@ namespace mtbase
 
             ~task_scheduler()
             {
-                for (auto& ptr : tasks)
-                    if (ptr != nullptr)
-                        resource.deallocate(ptr, sizeof(task_t), alignof(task_t));
+                for (auto& taggedTask : taggedTasks)
+                {
+                    task_t* task = tagged_task_t{ taggedTask.load() }.getTask();
+
+                    if (task != nullptr)
+                        resource.deallocate(task, sizeof(task_t), alignof(task_t));
+                }
             }
 
             bool pushFront(task_t* task)
@@ -213,12 +227,6 @@ namespace mtbase
             }
 
         private:
-            enum MODIFY_STATE :
-                std::size_t
-            {
-                MS_NONE = 0
-            };
-
             bool pushFrontFast(task_t* task)
             {
                 std::uint64_t oldIndex = index.load();
@@ -239,13 +247,11 @@ namespace mtbase
             static constexpr std::uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
             static constexpr std::uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
             static constexpr std::uint64_t MASK_INDEX = 0x0000'0000'FFFF'FFFFULL;
-            static constexpr std::uint64_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
-            static constexpr std::uint64_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
             static constexpr std::uint64_t SHIFT_FRONT = 32;
             static constexpr std::uint64_t SHIFT_BACK = 0;
             static constexpr int MAX_RETRY_FAST = 3;
             std::atomic_uint64_t index;
-            std::array<std::atomic<task_t*>, Size> tasks;
+            std::array<std::atomic_size_t, Size> taggedTasks;
             mi_memory_resource& resource;
         };
 
