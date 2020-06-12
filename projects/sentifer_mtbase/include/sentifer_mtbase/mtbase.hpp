@@ -122,16 +122,9 @@ namespace mtbase
 
         };
 
-        struct tagged_task_t
+        struct task_scheduler_base
         {
-            tagged_task_t(task_t* task) :
-                ptr{ task }
-            {}
-
-            tagged_task_t(size_t tagged = 0) :
-                taggedValue{ tagged }
-            {}
-
+        protected:
             enum MODIFY_STATE :
                 size_t
             {
@@ -139,48 +132,96 @@ namespace mtbase
                 MS_RESERVE = 1
             };
 
-            MODIFY_STATE getModifyState() const noexcept
+            template<class Ptr>
+            struct tagged_ptr
             {
-                return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
-            }
+                tagged_ptr(Ptr* oldPtr) :
+                    ptr{ oldPtr }
+                {}
 
-            task_t* getTask() const noexcept
-            {
-                return changeModifyState(MS_NONE).ptr;
-            }
+                tagged_ptr(size_t tagged = 0) :
+                    taggedValue{ tagged }
+                {}
 
-            size_t getTaggedValue() const noexcept
-            {
-                return taggedValue;
-            }
-
-            tagged_task_t changeModifyState(MODIFY_STATE modifyState) const noexcept
-            {
-                return tagged_task_t
+                MODIFY_STATE getModifyState() const noexcept
                 {
-                    ((taggedValue & MASK_EXCEPT_MODIFY_STATE) |
-                    (static_cast<size_t>(modifyState)))
+                    return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
+                }
+
+                Ptr* getPtr() const noexcept
+                {
+                    return changeModifyState(MS_NONE).ptr;
+                }
+
+                size_t getTaggedValue() const noexcept
+                {
+                    return taggedValue;
+                }
+
+                tagged_ptr changeModifyState(MODIFY_STATE modifyState) const noexcept
+                {
+                    return tagged_ptr
+                    {
+                        ((taggedValue & MASK_EXCEPT_MODIFY_STATE) |
+                        (static_cast<size_t>(modifyState)))
+                    };
+                }
+
+                tagged_ptr changePtr(Ptr* newPtr) const noexcept
+                {
+                    return tagged_ptr{ newPtr }.changeModifyState(getModifyState());
+                }
+
+            private:
+                union
+                {
+                    Ptr* ptr;
+                    size_t taggedValue;
                 };
-            }
 
-            tagged_task_t changeTask(task_t* task) const noexcept
-            {
-                return tagged_task_t{ task }.changeModifyState(getModifyState());
-            }
-
-        private:
-            union
-            {
-                task_t* ptr;
-                size_t taggedValue;
+                static constexpr size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
+                static constexpr size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
             };
 
-            static constexpr size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
-            static constexpr size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
+            using tagged_task_t = tagged_ptr<task_t>;
+
+            struct alignas(BASE_ALIGN) slow_op_desc
+            {
+                enum OP_PHASE :
+                    size_t
+                {
+                    OP_BEGIN,
+                    OP_RESERVE,
+                    OP_COMMIT,
+                    OP_MOVE,
+                    OP_END
+                };
+
+                enum OP_KIND :
+                    size_t
+                {
+                    OK_PUSH_FRONT,
+                    OK_PUSH_BACK,
+                    OK_POP_FRONT,
+                    OK_POP_BACK
+                };
+
+                const OP_PHASE phase;
+                const OP_KIND op;
+                const uint64_t oldFront;
+                const uint64_t oldBack;
+                const uint64_t newFront;
+                const uint64_t newBack;
+                const tagged_task_t oldTagged;
+                const task_t* task;
+            };
+
+            using tagged_slow_op_desc = tagged_ptr<slow_op_desc>;
         };
 
-        template<std::uint32_t Size>
-        struct alignas(BASE_ALIGN) task_scheduler final
+        template<std::uint32_t SIZE>
+        struct alignas(BASE_ALIGN) task_scheduler final :
+            public task_scheduler_base
         {
             task_scheduler(mi_memory_resource& res) :
                 resource{ res }
@@ -190,7 +231,7 @@ namespace mtbase
             {
                 for (auto& taggedTask : taggedTasks)
                 {
-                    task_t* task = tagged_task_t{ taggedTask.load() }.getTask();
+                    task_t* task = tagged_task_t{ taggedTask.load() }.getPtr();
 
                     if (task != nullptr)
                         resource.deallocate(task, sizeof(task_t), alignof(task_t));
@@ -254,11 +295,11 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE ||
-                    oldFrontTagged.getTask() != nullptr)
+                if (oldFrontTagged.getModifyState() != MS_NONE ||
+                    oldFrontTagged.getPtr() != nullptr)
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, (oldFront + Size - 1) % Size, oldBack,
+                return exchangeFast(task, oldFront, oldBack, (oldFront + SIZE - 1) % SIZE, oldBack,
                     taggedTasks[oldFront], oldFrontTagged);
             }
 
@@ -267,16 +308,16 @@ namespace mtbase
                 uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
-                if (isFull(oldBack, oldFront))
+                if (isFull(oldFront, oldBack))
                     return false;
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE ||
-                    oldBackTagged.getTask() != nullptr)
+                if (oldBackTagged.getModifyState() != MS_NONE ||
+                    oldBackTagged.getPtr() != nullptr)
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % Size,
+                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % SIZE,
                     taggedTasks[oldBack], oldBackTagged);
             }
 
@@ -290,13 +331,13 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE ||
-                    oldFrontTagged.getTask() == nullptr)
+                if (oldFrontTagged.getModifyState() != MS_NONE ||
+                    oldFrontTagged.getPtr() == nullptr)
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % Size, oldBack,
+                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % SIZE, oldBack,
                     taggedTasks[oldFront], oldFrontTagged) ?
-                    oldFrontTagged.getTask() : nullptr;
+                    oldFrontTagged.getPtr() : nullptr;
             }
 
             task_t* popBackFast()
@@ -309,13 +350,13 @@ namespace mtbase
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE ||
-                    oldBackTagged.getTask() == nullptr)
+                if (oldBackTagged.getModifyState() != MS_NONE ||
+                    oldBackTagged.getPtr() == nullptr)
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + Size - 1) % Size,
+                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + SIZE - 1) % SIZE,
                     taggedTasks[oldBack], oldBackTagged) ?
-                    oldBackTagged.getTask() : nullptr;
+                    oldBackTagged.getPtr() : nullptr;
             }
 
             bool exchangeFast(
@@ -327,16 +368,19 @@ namespace mtbase
                 std::atomic_size_t& taggedTask,
                 const tagged_task_t oldTagged)
             {
+                if (!isValidIndex(newFront, newBack))
+                    return false;
+
                 if (!commitTargetState(
                     taggedTask,
                     oldTagged,
-                    tagged_task_t::MS_RESERVE))
+                    MS_RESERVE))
                     return false;
 
                 const tagged_task_t newTaggedReserve
                 {
                     oldTagged
-                    .changeModifyState(tagged_task_t::MS_RESERVE)
+                    .changeModifyState(MS_RESERVE)
                     .getTaggedValue()
                 };
 
@@ -348,7 +392,7 @@ namespace mtbase
                     while (!commitTargetState(
                         taggedTask,
                         newTaggedReserve,
-                        tagged_task_t::MS_NONE));
+                        MS_NONE));
 
                     return false;
                 }
@@ -356,26 +400,26 @@ namespace mtbase
                 const tagged_task_t newTaggedCommit
                 {
                     newTaggedReserve
-                    .changeTask(task)
+                    .changePtr(task)
                     .getTaggedValue()
                 };
 
-                if (setNewIndex(oldFront, oldBack, newFront, newBack))
+                if (!setNewIndex(oldFront, oldBack, newFront, newBack))
                 {
-                    task_t* oldTask = oldTagged.getTask();
+                    task_t* oldTask = oldTagged.getPtr();
 
                     while (!commit(
                         taggedTask,
                         newTaggedCommit,
-                        oldTask, tagged_task_t::MS_NONE));
+                        oldTask, MS_NONE));
 
                     return false;
                 }
 
-                while (commitTargetState(
+                while (!commitTargetState(
                     taggedTask,
                     newTaggedCommit,
-                    tagged_task_t::MS_NONE));
+                    MS_NONE));
 
                 return true;
             }
@@ -397,14 +441,19 @@ namespace mtbase
             #pragma endregion
 
             #pragma region WAIT_FREE_UTILS
-            bool isFull(const uint64_t oldPushDir, const uint64_t oldPopDir) const noexcept
+            bool isFull(const uint64_t oldFront, const uint64_t oldBack) const noexcept
             {
-                return (oldPopDir + Size - oldPushDir) % Size == 1;
+                return (oldFront + SIZE - oldBack) % SIZE == 1;
             }
 
             bool isEmpty(const uint64_t oldFront, const uint64_t oldBack) const noexcept
             {
-                return oldFront == oldBack;
+                return (oldBack + SIZE - oldFront) % SIZE == 1;
+            }
+
+            bool isValidIndex(const uint64_t newFront, const uint64_t newBack) const noexcept
+            {
+                return newFront != newBack;
             }
 
             void getOldIndex(uint64_t& oldFront, uint64_t& oldBack) const noexcept
@@ -423,7 +472,7 @@ namespace mtbase
                 return index.compare_exchange_strong(oldIndex, newIndex);
             }
 
-            bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, tagged_task_t::MODIFY_STATE targetState) noexcept
+            bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, MODIFY_STATE targetState) noexcept
             {
                 size_t oldTaggedValue = oldTagged.getTaggedValue();
                 size_t newTaggedValue =
@@ -441,7 +490,7 @@ namespace mtbase
                 size_t oldTaggedValue = oldTagged.getTaggedValue();
                 size_t newTaggedValue =
                     oldTagged
-                    .changeTask(task)
+                    .changePtr(task)
                     .getTaggedValue();
 
                 if (!taggedTask
@@ -449,12 +498,12 @@ namespace mtbase
                     return false;
             }
 
-            bool commit(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task, tagged_task_t::MODIFY_STATE targetState) noexcept
+            bool commit(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task, MODIFY_STATE targetState) noexcept
             {
                 size_t oldTaggedValue = oldTagged.getTaggedValue();
                 size_t newTaggedValue =
                     oldTagged
-                    .changeTask(task)
+                    .changePtr(task)
                     .changeModifyState(targetState)
                     .getTaggedValue();
 
@@ -465,21 +514,19 @@ namespace mtbase
             // WAIT_FREE_UTILS
             #pragma endregion
 
-            bool pushFrontSlow(task_t* task);
-            bool pushBackSlow(task_t* task);
-            task_t* popFrontSlow();
-            task_t* popBackSlow();
+            #pragma region HYALINE_SIMPLE_BASIC
+            // HYALINE_SIMPLE_BASIC
+            #pragma endregion
 
         private:
-            static constexpr std::uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
-            static constexpr std::uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
-            static constexpr std::uint64_t MASK_INDEX = 0x0000'0000'FFFF'FFFFULL;
-            static constexpr std::uint64_t SHIFT_FRONT = 32;
-            static constexpr std::uint64_t SHIFT_BACK = 0;
+            static constexpr uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
+            static constexpr uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
+            static constexpr uint64_t SHIFT_FRONT = 32;
+            static constexpr uint64_t SHIFT_BACK = 0;
             static constexpr int MAX_RETRY_FAST = 4;
             std::atomic_uint64_t index;
-            std::array<std::atomic_size_t, Size> taggedTasks;
             mi_memory_resource& resource;
+            std::array<std::atomic_size_t, SIZE> taggedTasks;
         };
 
         static mi_memory_resource res;
