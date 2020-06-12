@@ -391,9 +391,9 @@ namespace mtbase
                 return (oldPopDir + Size - oldPushDir) % Size == 1;
             }
 
-            bool isEmpty(const std::uint64_t oldPushDir, const std::uint64_t oldPopDir) const noexcept
+            bool isEmpty(const std::uint64_t oldFront, const std::uint64_t oldBack) const noexcept
             {
-                return oldPushDir == oldPopDir;
+                return oldFront == oldBack;
             }
 
             bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, tagged_task_t::MODIFY_STATE targetState) noexcept
