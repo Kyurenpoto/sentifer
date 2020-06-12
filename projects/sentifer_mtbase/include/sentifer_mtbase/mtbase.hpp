@@ -24,12 +24,12 @@ namespace mtbase
             }
 
         private:
-            virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
+            virtual void* do_allocate(size_t bytes, size_t alignment) override
             {
                 return mi_heap_zalloc_aligned(heap, bytes, alignment);
             }
 
-            virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
+            virtual void do_deallocate(void* p, size_t bytes, size_t alignment) override
             {
                 return mi_free(p);
             }
@@ -115,7 +115,9 @@ namespace mtbase
 
     inline namespace schedulers
     {
-        struct alignas(alignof(void*)) task_t
+        constexpr size_t BASE_ALIGN = alignof(void*);
+
+        struct alignas(BASE_ALIGN) task_t
         {
 
         };
@@ -131,10 +133,10 @@ namespace mtbase
             {}
 
             enum MODIFY_STATE :
-                std::size_t
+                size_t
             {
                 MS_NONE = 0,
-                MS_RESERVE = 1,
+                MS_RESERVE = 1
             };
 
             MODIFY_STATE getModifyState() const noexcept
@@ -173,12 +175,12 @@ namespace mtbase
                 size_t taggedValue;
             };
 
-            static constexpr std::size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
-            static constexpr std::size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
+            static constexpr size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
+            static constexpr size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
         };
 
         template<std::uint32_t Size>
-        struct task_scheduler final
+        struct alignas(BASE_ALIGN) task_scheduler final
         {
             task_scheduler(mi_memory_resource& res) :
                 resource{ res }
@@ -195,13 +197,14 @@ namespace mtbase
                 }
             }
 
+            #pragma region WAIT_FREE_DEQUE_API
             bool pushFront(task_t* task)
             {
                 for (int i = 0; i < MAX_RETRY_FAST; ++i)
                     if (pushFrontFast(task))
                         return true;
 
-                return pushFrontFast(task);
+                return pushFrontSlow(task);
             }
 
             bool pushBack(task_t* task)
@@ -210,7 +213,7 @@ namespace mtbase
                     if (pushBackFast(task))
                         return true;
 
-                return pushBackFast(task);
+                return pushBackSlow(task);
             }
 
             task_t* popFront()
@@ -222,7 +225,7 @@ namespace mtbase
                         return result;
                 }
 
-                return popFrontFast();
+                return popFrontSlow();
             }
 
             task_t* popBack()
@@ -234,13 +237,16 @@ namespace mtbase
                         return result;
                 }
 
-                return popBackFast();
+                return popBackSlow();
             }
+            // WAIT_FREE_DEQUE_API
+            #pragma endregion
 
         private:
+            #pragma region WAIT_FREE_FAST_PATH
             bool pushFrontFast(task_t* task)
             {
-                std::uint64_t oldFront, oldBack;
+                uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
                 if (isFull(oldFront, oldBack))
@@ -248,7 +254,8 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE)
+                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE ||
+                    oldFrontTagged.getTask() != nullptr)
                     return false;
 
                 return exchangeFast(task, oldFront, oldBack, (oldFront + Size - 1) % Size, oldBack,
@@ -257,7 +264,7 @@ namespace mtbase
 
             bool pushBackFast(task_t* task)
             {
-                std::uint64_t oldFront, oldBack;
+                uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
                 if (isFull(oldBack, oldFront))
@@ -265,7 +272,8 @@ namespace mtbase
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE)
+                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE ||
+                    oldBackTagged.getTask() != nullptr)
                     return false;
 
                 return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % Size,
@@ -274,7 +282,7 @@ namespace mtbase
 
             task_t* popFrontFast()
             {
-                std::uint64_t oldFront, oldBack;
+                uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
                 if (isEmpty(oldFront, oldBack))
@@ -282,7 +290,8 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE)
+                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE ||
+                    oldFrontTagged.getTask() == nullptr)
                     return false;
 
                 return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % Size, oldBack,
@@ -292,7 +301,7 @@ namespace mtbase
 
             task_t* popBackFast()
             {
-                std::uint64_t oldFront, oldBack;
+                uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
                 if (isEmpty(oldFront, oldBack))
@@ -300,7 +309,8 @@ namespace mtbase
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE)
+                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE ||
+                    oldBackTagged.getTask() == nullptr)
                     return false;
 
                 return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + Size - 1) % Size,
@@ -310,10 +320,10 @@ namespace mtbase
 
             bool exchangeFast(
                 task_t* task,
-                const std::uint64_t oldFront,
-                const std::uint64_t oldBack,
-                const std::uint64_t newFront,
-                const std::uint64_t newBack,
+                const uint64_t oldFront,
+                const uint64_t oldBack,
+                const uint64_t newFront,
+                const uint64_t newBack,
                 std::atomic_size_t& taggedTask,
                 const tagged_task_t oldTagged)
             {
@@ -369,37 +379,54 @@ namespace mtbase
 
                 return true;
             }
+            // WAIT_FREE_FAST_PATH
+            #pragma endregion
 
-            void getOldIndex(std::uint64_t& oldFront, std::uint64_t& oldBack) const noexcept
+            #pragma region WAIT_FREE_SLOW_PATH
+            bool pushFrontSlow(task_t* task)
             {
-                std::uint64_t oldIndex = index.load();
+
+            }
+
+            bool pushBackSlow(task_t* task);
+            
+            task_t* popFrontSlow();
+            
+            task_t* popBackSlow();
+            // WAIT_FREE_SLOW_PATH
+            #pragma endregion
+
+            #pragma region WAIT_FREE_UTILS
+            bool isFull(const uint64_t oldPushDir, const uint64_t oldPopDir) const noexcept
+            {
+                return (oldPopDir + Size - oldPushDir) % Size == 1;
+            }
+
+            bool isEmpty(const uint64_t oldFront, const uint64_t oldBack) const noexcept
+            {
+                return oldFront == oldBack;
+            }
+
+            void getOldIndex(uint64_t& oldFront, uint64_t& oldBack) const noexcept
+            {
+                uint64_t oldIndex = index.load();
                 
                 oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
                 oldBack = (oldIndex & MASK_BACK) >> SHIFT_BACK;
             }
 
-            bool setNewIndex(const std::uint64_t oldFront, const std::uint64_t oldBack, const std::uint64_t newFront, const std::uint64_t newBack)
+            bool setNewIndex(const uint64_t oldFront, const uint64_t oldBack, const uint64_t newFront, const uint64_t newBack)
             {
-                std::uint64_t oldIndex = (oldFront << SHIFT_FRONT) & (oldBack << SHIFT_BACK);
-                std::uint64_t newIndex = (newFront << SHIFT_FRONT) & (newBack << SHIFT_BACK);
+                uint64_t oldIndex = (oldFront << SHIFT_FRONT) & (oldBack << SHIFT_BACK);
+                uint64_t newIndex = (newFront << SHIFT_FRONT) & (newBack << SHIFT_BACK);
 
                 return index.compare_exchange_strong(oldIndex, newIndex);
             }
 
-            bool isFull(const std::uint64_t oldPushDir, const std::uint64_t oldPopDir) const noexcept
-            {
-                return (oldPopDir + Size - oldPushDir) % Size == 1;
-            }
-
-            bool isEmpty(const std::uint64_t oldFront, const std::uint64_t oldBack) const noexcept
-            {
-                return oldFront == oldBack;
-            }
-
             bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, tagged_task_t::MODIFY_STATE targetState) noexcept
             {
-                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
-                std::size_t newTaggedValue =
+                size_t oldTaggedValue = oldTagged.getTaggedValue();
+                size_t newTaggedValue =
                     oldTagged
                     .changeModifyState(targetState)
                     .getTaggedValue();
@@ -411,8 +438,8 @@ namespace mtbase
 
             bool commitTask(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task) noexcept
             {
-                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
-                std::size_t newTaggedValue =
+                size_t oldTaggedValue = oldTagged.getTaggedValue();
+                size_t newTaggedValue =
                     oldTagged
                     .changeTask(task)
                     .getTaggedValue();
@@ -424,8 +451,8 @@ namespace mtbase
 
             bool commit(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task, tagged_task_t::MODIFY_STATE targetState) noexcept
             {
-                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
-                std::size_t newTaggedValue =
+                size_t oldTaggedValue = oldTagged.getTaggedValue();
+                size_t newTaggedValue =
                     oldTagged
                     .changeTask(task)
                     .changeModifyState(targetState)
@@ -435,6 +462,8 @@ namespace mtbase
                     .compare_exchange_strong(oldTaggedValue, newTaggedValue))
                     return false;
             }
+            // WAIT_FREE_UTILS
+            #pragma endregion
 
             bool pushFrontSlow(task_t* task);
             bool pushBackSlow(task_t* task);
