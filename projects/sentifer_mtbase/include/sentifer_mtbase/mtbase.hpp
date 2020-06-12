@@ -240,47 +240,89 @@ namespace mtbase
         private:
             bool pushFrontFast(task_t* task)
             {
-                std::uint64_t oldIndex = index.load();
-                std::uint64_t oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
-                std::uint64_t oldBack = (oldIndex & MASK_BACK) >> SHIFT_BACK;
+                std::uint64_t oldFront, oldBack;
+                getOldIndex(oldFront, oldBack);
 
                 if (isFull(oldFront, oldBack))
                     return false;
 
-                tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
+                const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
                 if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE)
                     return false;
 
-                if (!commitTargetState(
-                    taggedTasks[oldFront],
-                    oldFrontTagged,
-                    tagged_task_t::MS_RESERVE))
-                    return false;
-
-                tagged_task_t newFrontTaggedReserve
-                {
-                    oldFrontTagged
-                    .changeModifyState(tagged_task_t::MS_RESERVE)
-                    .getTaggedValue()
-                };
-
-                if (!commitTask(
-                    taggedTasks[oldFront],
-                    newFrontTaggedReserve, task))
-                {
-                    while (!commitTargetState(
-                        taggedTasks[oldFront],
-                        newFrontTaggedReserve,
-                        tagged_task_t::MS_NONE));
-
-                    return false;
-                }
+                return exchangeFast(task, oldFront, oldBack, (oldFront + Size - 1) % Size, oldBack,
+                    taggedTasks[oldFront], oldFrontTagged);
             }
 
-            bool pushBackFast(task_t* task);
-            task_t* popFrontFast();
-            task_t* popBackFast();
+            bool pushBackFast(task_t* task)
+            {
+                std::uint64_t oldFront, oldBack;
+                getOldIndex(oldFront, oldBack);
+
+                if (isFull(oldFront, oldBack))
+                    return false;
+
+                const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
+
+                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE)
+                    return false;
+
+                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % Size,
+                    taggedTasks[oldBack], oldBackTagged);
+            }
+
+            task_t* popFrontFast()
+            {
+                std::uint64_t oldFront, oldBack;
+                getOldIndex(oldFront, oldBack);
+
+                if (isFull(oldFront, oldBack))
+                    return false;
+
+                const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
+
+                if (oldFrontTagged.getModifyState() != tagged_task_t::MS_NONE)
+                    return false;
+
+                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % Size, oldBack,
+                    taggedTasks[oldFront], oldFrontTagged) ?
+                    oldFrontTagged.getTask() : nullptr;
+            }
+
+            task_t* popBackFast()
+            {
+                std::uint64_t oldFront, oldBack;
+                getOldIndex(oldFront, oldBack);
+
+                if (isFull(oldFront, oldBack))
+                    return false;
+
+                const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
+
+                if (oldBackTagged.getModifyState() != tagged_task_t::MS_NONE)
+                    return false;
+
+                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + Size - 1) % Size,
+                    taggedTasks[oldBack], oldBackTagged) ?
+                    oldBackTagged.getTask() : nullptr;
+            }
+
+            void getOldIndex(std::uint64_t& oldFront, std::uint64_t& oldBack) const noexcept
+            {
+                std::uint64_t oldIndex = index.load();
+                
+                oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
+                oldBack = (oldIndex & MASK_BACK) >> SHIFT_BACK;
+            }
+
+            bool setNewIndex(const std::uint64_t oldFront, const std::uint64_t oldBack, const std::uint64_t newFront, const std::uint64_t newBack)
+            {
+                std::uint64_t oldIndex = (oldFront << SHIFT_FRONT) & (oldBack << SHIFT_BACK);
+                std::uint64_t newIndex = (newFront << SHIFT_FRONT) & (newBack << SHIFT_BACK);
+
+                return index.compare_exchange_strong(oldIndex, newIndex);
+            }
 
             bool isFull(const std::uint64_t oldPushDir, const std::uint64_t oldPopDir) const noexcept
             {
@@ -318,6 +360,82 @@ namespace mtbase
                     return false;
             }
 
+            bool commit(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task, tagged_task_t::MODIFY_STATE targetState) noexcept
+            {
+                std::size_t oldTaggedValue = oldTagged.getTaggedValue();
+                std::size_t newTaggedValue =
+                    oldTagged
+                    .changeTask(task)
+                    .changeModifyState(targetState)
+                    .getTaggedValue();
+
+                if (!taggedTask
+                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
+                    return false;
+            }
+
+            bool exchangeFast(
+                task_t* task,
+                const std::uint64_t oldFront,
+                const std::uint64_t oldBack,
+                const std::uint64_t newFront,
+                const std::uint64_t newBack,
+                std::atomic_size_t& taggedTask,
+                const tagged_task_t oldTagged)
+            {
+                if (!commitTargetState(
+                    taggedTask,
+                    oldTagged,
+                    tagged_task_t::MS_RESERVE))
+                    return false;
+
+                const tagged_task_t newTaggedReserve
+                {
+                    oldTagged
+                    .changeModifyState(tagged_task_t::MS_RESERVE)
+                    .getTaggedValue()
+                };
+
+                if (!commitTask(
+                    taggedTask,
+                    newTaggedReserve,
+                    task))
+                {
+                    while (!commitTargetState(
+                        taggedTask,
+                        newTaggedReserve,
+                        tagged_task_t::MS_NONE));
+
+                    return false;
+                }
+
+                const tagged_task_t newTaggedCommit
+                {
+                    newTaggedReserve
+                    .changeTask(task)
+                    .getTaggedValue()
+                };
+
+                if (setNewIndex(oldFront, oldBack, newFront, newBack))
+                {
+                    task_t* oldTask = oldTagged.getTask();
+
+                    while (!commit(
+                        taggedTask,
+                        newTaggedCommit,
+                        oldTask, tagged_task_t::MS_NONE));
+
+                    return false;
+                }
+
+                while (commitTargetState(
+                    taggedTask,
+                    newTaggedCommit,
+                    tagged_task_t::MS_NONE));
+
+                return true;
+            }
+
             bool pushFrontSlow(task_t* task);
             bool pushBackSlow(task_t* task);
             task_t* popFrontSlow();
@@ -329,7 +447,7 @@ namespace mtbase
             static constexpr std::uint64_t MASK_INDEX = 0x0000'0000'FFFF'FFFFULL;
             static constexpr std::uint64_t SHIFT_FRONT = 32;
             static constexpr std::uint64_t SHIFT_BACK = 0;
-            static constexpr int MAX_RETRY_FAST = 3;
+            static constexpr int MAX_RETRY_FAST = 4;
             std::atomic_uint64_t index;
             std::array<std::atomic_size_t, Size> taggedTasks;
             mi_memory_resource& resource;
