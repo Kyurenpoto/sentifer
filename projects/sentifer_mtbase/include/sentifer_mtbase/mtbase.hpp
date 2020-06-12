@@ -260,7 +260,7 @@ namespace mtbase
                 std::uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
-                if (isFull(oldFront, oldBack))
+                if (isFull(oldBack, oldFront))
                     return false;
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
@@ -277,7 +277,7 @@ namespace mtbase
                 std::uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
-                if (isFull(oldFront, oldBack))
+                if (isEmpty(oldFront, oldBack))
                     return false;
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
@@ -295,7 +295,7 @@ namespace mtbase
                 std::uint64_t oldFront, oldBack;
                 getOldIndex(oldFront, oldBack);
 
-                if (isFull(oldFront, oldBack))
+                if (isEmpty(oldFront, oldBack))
                     return false;
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
@@ -306,6 +306,68 @@ namespace mtbase
                 return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + Size - 1) % Size,
                     taggedTasks[oldBack], oldBackTagged) ?
                     oldBackTagged.getTask() : nullptr;
+            }
+
+            bool exchangeFast(
+                task_t* task,
+                const std::uint64_t oldFront,
+                const std::uint64_t oldBack,
+                const std::uint64_t newFront,
+                const std::uint64_t newBack,
+                std::atomic_size_t& taggedTask,
+                const tagged_task_t oldTagged)
+            {
+                if (!commitTargetState(
+                    taggedTask,
+                    oldTagged,
+                    tagged_task_t::MS_RESERVE))
+                    return false;
+
+                const tagged_task_t newTaggedReserve
+                {
+                    oldTagged
+                    .changeModifyState(tagged_task_t::MS_RESERVE)
+                    .getTaggedValue()
+                };
+
+                if (!commitTask(
+                    taggedTask,
+                    newTaggedReserve,
+                    task))
+                {
+                    while (!commitTargetState(
+                        taggedTask,
+                        newTaggedReserve,
+                        tagged_task_t::MS_NONE));
+
+                    return false;
+                }
+
+                const tagged_task_t newTaggedCommit
+                {
+                    newTaggedReserve
+                    .changeTask(task)
+                    .getTaggedValue()
+                };
+
+                if (setNewIndex(oldFront, oldBack, newFront, newBack))
+                {
+                    task_t* oldTask = oldTagged.getTask();
+
+                    while (!commit(
+                        taggedTask,
+                        newTaggedCommit,
+                        oldTask, tagged_task_t::MS_NONE));
+
+                    return false;
+                }
+
+                while (commitTargetState(
+                    taggedTask,
+                    newTaggedCommit,
+                    tagged_task_t::MS_NONE));
+
+                return true;
             }
 
             void getOldIndex(std::uint64_t& oldFront, std::uint64_t& oldBack) const noexcept
@@ -372,68 +434,6 @@ namespace mtbase
                 if (!taggedTask
                     .compare_exchange_strong(oldTaggedValue, newTaggedValue))
                     return false;
-            }
-
-            bool exchangeFast(
-                task_t* task,
-                const std::uint64_t oldFront,
-                const std::uint64_t oldBack,
-                const std::uint64_t newFront,
-                const std::uint64_t newBack,
-                std::atomic_size_t& taggedTask,
-                const tagged_task_t oldTagged)
-            {
-                if (!commitTargetState(
-                    taggedTask,
-                    oldTagged,
-                    tagged_task_t::MS_RESERVE))
-                    return false;
-
-                const tagged_task_t newTaggedReserve
-                {
-                    oldTagged
-                    .changeModifyState(tagged_task_t::MS_RESERVE)
-                    .getTaggedValue()
-                };
-
-                if (!commitTask(
-                    taggedTask,
-                    newTaggedReserve,
-                    task))
-                {
-                    while (!commitTargetState(
-                        taggedTask,
-                        newTaggedReserve,
-                        tagged_task_t::MS_NONE));
-
-                    return false;
-                }
-
-                const tagged_task_t newTaggedCommit
-                {
-                    newTaggedReserve
-                    .changeTask(task)
-                    .getTaggedValue()
-                };
-
-                if (setNewIndex(oldFront, oldBack, newFront, newBack))
-                {
-                    task_t* oldTask = oldTagged.getTask();
-
-                    while (!commit(
-                        taggedTask,
-                        newTaggedCommit,
-                        oldTask, tagged_task_t::MS_NONE));
-
-                    return false;
-                }
-
-                while (commitTargetState(
-                    taggedTask,
-                    newTaggedCommit,
-                    tagged_task_t::MS_NONE));
-
-                return true;
             }
 
             bool pushFrontSlow(task_t* task);
