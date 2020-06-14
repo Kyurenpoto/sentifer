@@ -9,6 +9,48 @@
 
 namespace mtbase
 {
+#ifdef MTBASE_CUSTOM_MAX_THREAD
+#define MTBASE_MAX_THREAD MTBASE_CUSTOM_MAX_THREAD
+#else
+#define MTBASE_MAX_THREAD 16
+#endif
+
+    namespace tls_variables
+    {
+        static int createThreadId()
+        {
+            static std::atomic_int threadIdCounter = -1;
+            int oldThreadIdCounter, newThreadIdCounter;
+
+            while (true)
+            {
+                oldThreadIdCounter = threadIdCounter.load();
+                newThreadIdCounter = oldThreadIdCounter + 1;
+
+                if (newThreadIdCounter >= MTBASE_MAX_THREAD)
+                    return -1;
+
+                if (threadIdCounter.compare_exchange_strong(oldThreadIdCounter, newThreadIdCounter))
+                    break;
+            }
+
+            return newThreadIdCounter;
+        }
+
+        struct tls_variables
+        {
+            tls_variables() :
+                threadId{ createThreadId() }
+            {
+
+            }
+
+            int threadId;
+        };
+
+        thread_local tls_variables tls;
+    }
+
     inline namespace memory_managers
     {
         struct mi_memory_resource :
@@ -185,7 +227,7 @@ namespace mtbase
 
             using tagged_task_t = tagged_ptr<task_t>;
 
-            struct alignas(BASE_ALIGN) slow_op_desc
+            struct alignas(BASE_ALIGN * 8) slow_op_desc
             {
                 enum OP_PHASE :
                     size_t
@@ -200,29 +242,81 @@ namespace mtbase
                 enum OP_KIND :
                     size_t
                 {
+                    OK_NONE,
                     OK_PUSH_FRONT,
                     OK_PUSH_BACK,
                     OK_POP_FRONT,
                     OK_POP_BACK
                 };
 
-                const OP_PHASE phase;
-                const OP_KIND op;
-                const uint64_t oldFront;
-                const uint64_t oldBack;
-                const uint64_t newFront;
-                const uint64_t newBack;
-                const tagged_task_t oldTagged;
-                const task_t* task;
+                OP_PHASE phase = OP_BEGIN;
+                OP_KIND op = OK_NONE;
+                uint64_t oldFront = 0;
+                uint64_t oldBack = 0;
+                uint64_t newFront = 0;
+                uint64_t newBack = 0;
+                tagged_task_t oldTagged;
+                task_t* task = nullptr;
             };
 
             using tagged_slow_op_desc = tagged_ptr<slow_op_desc>;
+
+            struct help_record
+            {
+                void reset(std::array<std::atomic_size_t, MTBASE_MAX_THREAD>& taggedDescs)
+                {
+                    curThreadId = (curThreadId + 1) % MTBASE_MAX_THREAD;
+                    delay = HELPING_DELAY;
+
+                    tagged_slow_op_desc oldTaggedDesc = reserveDesc(taggedDescs[curThreadId]);
+                    lastPhase = oldTaggedDesc.getPtr()->phase;
+
+                    releaseDesc(taggedDescs[curThreadId], oldTaggedDesc.changeModifyState(MS_NONE));
+                }
+
+                tagged_slow_op_desc reserveDesc(std::atomic_size_t& taggedDesc)
+                {
+                    size_t oldTaggedValue = taggedDesc.load();
+                    tagged_slow_op_desc oldTaggedDesc{ oldTaggedValue };
+                    size_t newTaggedValue =
+                        oldTaggedDesc.changeModifyState(MS_RESERVE).getTaggedValue();
+                    while (oldTaggedDesc.getModifyState() != MS_NONE ||
+                        !taggedDesc.compare_exchange_strong(oldTaggedValue, newTaggedValue))
+                        oldTaggedDesc = tagged_slow_op_desc{ oldTaggedValue };
+
+                    return tagged_slow_op_desc{ oldTaggedValue };
+                }
+
+                void releaseDesc(std::atomic_size_t& taggedDesc, const tagged_slow_op_desc taggedDescRelease)
+                {
+                    taggedDesc.store(taggedDescRelease.getTaggedValue());
+                }
+
+            public:
+                slow_op_desc::OP_PHASE lastPhase = slow_op_desc::OP_BEGIN;
+                size_t delay = HELPING_DELAY;
+
+            private:
+                static constexpr size_t HELPING_DELAY = 5;
+
+                int curThreadId = -1;
+            };
+
+            std::array<slow_op_desc, MTBASE_MAX_THREAD> descs;
+            std::array<std::atomic_size_t, MTBASE_MAX_THREAD> taggedDescs;
+            std::array<help_record, MTBASE_MAX_THREAD> helpRecords;
         };
 
         template<std::uint32_t SIZE>
-        struct alignas(BASE_ALIGN) task_scheduler final :
+        struct task_scheduler :
             public task_scheduler_base
         {
+            static_assert(SIZE <= 0xFFFF'FFFDU,
+                "task_scheduler reserve 2 slots to prevent conflict of index pointers: front & back");
+            static_assert(SIZE >= 64U);
+
+            static constexpr uint32_t REAL_SIZE = SIZE + 2;
+
             task_scheduler(mi_memory_resource& res) :
                 resource{ res }
             {}
@@ -299,7 +393,7 @@ namespace mtbase
                     oldFrontTagged.getPtr() != nullptr)
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, (oldFront + SIZE - 1) % SIZE, oldBack,
+                return exchangeFast(task, oldFront, oldBack, (oldFront + REAL_SIZE - 1) % REAL_SIZE, oldBack,
                     taggedTasks[oldFront], oldFrontTagged);
             }
 
@@ -317,7 +411,7 @@ namespace mtbase
                     oldBackTagged.getPtr() != nullptr)
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % SIZE,
+                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % REAL_SIZE,
                     taggedTasks[oldBack], oldBackTagged);
             }
 
@@ -335,7 +429,7 @@ namespace mtbase
                     oldFrontTagged.getPtr() == nullptr)
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % SIZE, oldBack,
+                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % REAL_SIZE, oldBack,
                     taggedTasks[oldFront], oldFrontTagged) ?
                     oldFrontTagged.getPtr() : nullptr;
             }
@@ -354,7 +448,7 @@ namespace mtbase
                     oldBackTagged.getPtr() == nullptr)
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + SIZE - 1) % SIZE,
+                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + REAL_SIZE - 1) % REAL_SIZE,
                     taggedTasks[oldBack], oldBackTagged) ?
                     oldBackTagged.getPtr() : nullptr;
             }
@@ -443,12 +537,12 @@ namespace mtbase
             #pragma region WAIT_FREE_UTILS
             bool isFull(const uint64_t oldFront, const uint64_t oldBack) const noexcept
             {
-                return (oldFront + SIZE - oldBack) % SIZE == 1;
+                return (oldFront + REAL_SIZE - oldBack) % REAL_SIZE == 1;
             }
 
             bool isEmpty(const uint64_t oldFront, const uint64_t oldBack) const noexcept
             {
-                return (oldBack + SIZE - oldFront) % SIZE == 1;
+                return (oldBack + REAL_SIZE - oldFront) % REAL_SIZE == 1;
             }
 
             bool isValidIndex(const uint64_t newFront, const uint64_t newBack) const noexcept
@@ -514,10 +608,6 @@ namespace mtbase
             // WAIT_FREE_UTILS
             #pragma endregion
 
-            #pragma region HYALINE_SIMPLE_BASIC
-            // HYALINE_SIMPLE_BASIC
-            #pragma endregion
-
         private:
             static constexpr uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
             static constexpr uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
@@ -526,7 +616,7 @@ namespace mtbase
             static constexpr int MAX_RETRY_FAST = 4;
             std::atomic_uint64_t index;
             mi_memory_resource& resource;
-            std::array<std::atomic_size_t, SIZE> taggedTasks;
+            std::array<std::atomic_size_t, REAL_SIZE> taggedTasks;
         };
 
         static mi_memory_resource res;
