@@ -164,68 +164,113 @@ namespace mtbase
 
         };
 
+        enum PTR_ACCESS_TAG :
+            size_t
+        {
+            PAT_NONE = 0,
+            PAT_RESERVE = 1
+        };
+
+        template<class Ptr>
+        struct tagged_ptr
+        {
+            static_assert(std::is_pointer_v<Ptr> &&
+                alignof(std::remove_pointer_t<Ptr>) >= BASE_ALIGN);
+
+            tagged_ptr(Ptr oldPtr) :
+                ptr{ oldPtr }
+            {}
+
+            tagged_ptr(size_t tagged = 0) :
+                taggedValue{ tagged }
+            {}
+
+            PTR_ACCESS_TAG getTag() const noexcept
+            {
+                return static_cast<PTR_ACCESS_TAG>((taggedValue & MASK_TAG));
+            }
+
+            Ptr getPtr() const noexcept
+            {
+                return changeTag(PAT_NONE).ptr;
+            }
+
+            size_t getTaggedValue() const noexcept
+            {
+                return taggedValue;
+            }
+
+            tagged_ptr changeTag(PTR_ACCESS_TAG tag) const noexcept
+            {
+                return tagged_ptr
+                {
+                    ((taggedValue & MASK_EXCEPT_TAG) |
+                    (static_cast<size_t>(tag)))
+                };
+            }
+
+            tagged_ptr changePtr(Ptr newPtr) const noexcept
+            {
+                return tagged_ptr{ newPtr }
+                .changeTag(getTag());
+            }
+
+            bool commitTag(std::atomic_size_t& taggedPtr, PTR_ACCESS_TAG tag) noexcept
+            {
+                size_t oldTaggedValue = getTaggedValue();
+                size_t newTaggedValue = changeTag(tag)
+                    .getTaggedValue();
+
+                return taggedPtr.compare_exchange_strong(oldTaggedValue, newTaggedValue);
+            }
+
+            bool commitPtr(std::atomic_size_t& taggedPtr, Ptr newPtr) const noexcept
+            {
+                size_t oldTaggedValue = getTaggedValue();
+                size_t newTaggedValue = changePtr(newPtr)
+                    .getTaggedValue();
+
+                return taggedPtr.compare_exchange_strong(oldTaggedValue, newTaggedValue);
+            }
+
+            bool commit(
+                std::atomic_size_t& taggedPtr,
+                Ptr newPtr,
+                PTR_ACCESS_TAG targetState) const noexcept
+            {
+                size_t oldTaggedValue = getTaggedValue();
+                size_t newTaggedValue = changePtr(newPtr)
+                    .changeTag(targetState)
+                    .getTaggedValue();
+
+                return taggedPtr.compare_exchange_strong(oldTaggedValue, newTaggedValue);
+            }
+
+        private:
+            union
+            {
+                Ptr ptr;
+                size_t taggedValue;
+            };
+
+            static constexpr size_t MASK_TAG = 0x0000'0000'0000'0007ULL;
+            static constexpr size_t MASK_EXCEPT_TAG = 0xFFFF'FFFF'FFFF'FFF8ULL;
+        };
+
         struct task_scheduler_base
         {
         protected:
-            enum MODIFY_STATE :
-                size_t
+            void help()
             {
-                MS_NONE = 0,
-                MS_RESERVE = 1
-            };
+                auto& rec = helpRecords[tls_variables::tls.threadId];
+                if (rec.delay-- != 0)
+                    return;
 
-            template<class Ptr>
-            struct tagged_ptr
-            {
-                tagged_ptr(Ptr* oldPtr) :
-                    ptr{ oldPtr }
-                {}
+                auto desc = rec.reserveDesc(taggedDescs[tls_variables::tls.threadId]);
+            }
 
-                tagged_ptr(size_t tagged = 0) :
-                    taggedValue{ tagged }
-                {}
-
-                MODIFY_STATE getModifyState() const noexcept
-                {
-                    return static_cast<MODIFY_STATE>((taggedValue & MASK_MODIFY_STATE));
-                }
-
-                Ptr* getPtr() const noexcept
-                {
-                    return changeModifyState(MS_NONE).ptr;
-                }
-
-                size_t getTaggedValue() const noexcept
-                {
-                    return taggedValue;
-                }
-
-                tagged_ptr changeModifyState(MODIFY_STATE modifyState) const noexcept
-                {
-                    return tagged_ptr
-                    {
-                        ((taggedValue & MASK_EXCEPT_MODIFY_STATE) |
-                        (static_cast<size_t>(modifyState)))
-                    };
-                }
-
-                tagged_ptr changePtr(Ptr* newPtr) const noexcept
-                {
-                    return tagged_ptr{ newPtr }.changeModifyState(getModifyState());
-                }
-
-            private:
-                union
-                {
-                    Ptr* ptr;
-                    size_t taggedValue;
-                };
-
-                static constexpr size_t MASK_MODIFY_STATE = 0x0000'0000'0000'0007ULL;
-                static constexpr size_t MASK_EXCEPT_MODIFY_STATE = 0xFFFF'FFFF'FFFF'FFF8ULL;
-            };
-
-            using tagged_task_t = tagged_ptr<task_t>;
+        protected:
+            using tagged_task_t = tagged_ptr<task_t*>;
 
             struct alignas(BASE_ALIGN * 8) slow_op_desc
             {
@@ -259,7 +304,7 @@ namespace mtbase
                 task_t* task = nullptr;
             };
 
-            using tagged_slow_op_desc = tagged_ptr<slow_op_desc>;
+            using tagged_slow_op_desc = tagged_ptr<slow_op_desc*>;
 
             struct help_record
             {
@@ -271,7 +316,7 @@ namespace mtbase
                     tagged_slow_op_desc oldTaggedDesc = reserveDesc(taggedDescs[curThreadId]);
                     lastPhase = oldTaggedDesc.getPtr()->phase;
 
-                    releaseDesc(taggedDescs[curThreadId], oldTaggedDesc.changeModifyState(MS_NONE));
+                    releaseDesc(taggedDescs[curThreadId], oldTaggedDesc.changeTag(PAT_NONE));
                 }
 
                 tagged_slow_op_desc reserveDesc(std::atomic_size_t& taggedDesc)
@@ -279,8 +324,8 @@ namespace mtbase
                     size_t oldTaggedValue = taggedDesc.load();
                     tagged_slow_op_desc oldTaggedDesc{ oldTaggedValue };
                     size_t newTaggedValue =
-                        oldTaggedDesc.changeModifyState(MS_RESERVE).getTaggedValue();
-                    while (oldTaggedDesc.getModifyState() != MS_NONE ||
+                        oldTaggedDesc.changeTag(PAT_RESERVE).getTaggedValue();
+                    while (oldTaggedDesc.getTag() != PAT_NONE ||
                         !taggedDesc.compare_exchange_strong(oldTaggedValue, newTaggedValue))
                         oldTaggedDesc = tagged_slow_op_desc{ oldTaggedValue };
 
@@ -389,7 +434,7 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != MS_NONE ||
+                if (oldFrontTagged.getTag() != PAT_NONE ||
                     oldFrontTagged.getPtr() != nullptr)
                     return false;
 
@@ -407,7 +452,7 @@ namespace mtbase
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != MS_NONE ||
+                if (oldBackTagged.getTag() != PAT_NONE ||
                     oldBackTagged.getPtr() != nullptr)
                     return false;
 
@@ -425,7 +470,7 @@ namespace mtbase
 
                 const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
 
-                if (oldFrontTagged.getModifyState() != MS_NONE ||
+                if (oldFrontTagged.getTag() != PAT_NONE ||
                     oldFrontTagged.getPtr() == nullptr)
                     return false;
 
@@ -444,7 +489,7 @@ namespace mtbase
 
                 const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
 
-                if (oldBackTagged.getModifyState() != MS_NONE ||
+                if (oldBackTagged.getTag() != PAT_NONE ||
                     oldBackTagged.getPtr() == nullptr)
                     return false;
 
@@ -465,28 +510,19 @@ namespace mtbase
                 if (!isValidIndex(newFront, newBack))
                     return false;
 
-                if (!commitTargetState(
-                    taggedTask,
-                    oldTagged,
-                    MS_RESERVE))
+                if (!oldTagged.commitTag(taggedTask, PAT_RESERVE))
                     return false;
 
                 const tagged_task_t newTaggedReserve
                 {
                     oldTagged
-                    .changeModifyState(MS_RESERVE)
+                    .changeTag(PAT_RESERVE)
                     .getTaggedValue()
                 };
 
-                if (!commitTask(
-                    taggedTask,
-                    newTaggedReserve,
-                    task))
+                if (!newTaggedReserve.commitPtr(taggedTask, task))
                 {
-                    while (!commitTargetState(
-                        taggedTask,
-                        newTaggedReserve,
-                        MS_NONE));
+                    while (!newTaggedReserve.commitTag(taggedTask, PAT_NONE));
 
                     return false;
                 }
@@ -502,18 +538,12 @@ namespace mtbase
                 {
                     task_t* oldTask = oldTagged.getPtr();
 
-                    while (!commit(
-                        taggedTask,
-                        newTaggedCommit,
-                        oldTask, MS_NONE));
+                    while (!newTaggedCommit.commit(taggedTask, oldTask, PAT_NONE));
 
                     return false;
                 }
 
-                while (!commitTargetState(
-                    taggedTask,
-                    newTaggedCommit,
-                    MS_NONE));
+                while (!newTaggedCommit.commitTag(taggedTask, PAT_NONE));
 
                 return true;
             }
@@ -565,49 +595,9 @@ namespace mtbase
 
                 return index.compare_exchange_strong(oldIndex, newIndex);
             }
-
-            bool commitTargetState(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, MODIFY_STATE targetState) noexcept
-            {
-                size_t oldTaggedValue = oldTagged.getTaggedValue();
-                size_t newTaggedValue =
-                    oldTagged
-                    .changeModifyState(targetState)
-                    .getTaggedValue();
-
-                if (!taggedTask
-                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
-                    return false;
-            }
-
-            bool commitTask(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task) noexcept
-            {
-                size_t oldTaggedValue = oldTagged.getTaggedValue();
-                size_t newTaggedValue =
-                    oldTagged
-                    .changePtr(task)
-                    .getTaggedValue();
-
-                if (!taggedTask
-                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
-                    return false;
-            }
-
-            bool commit(std::atomic_size_t& taggedTask, const tagged_task_t& oldTagged, task_t* task, MODIFY_STATE targetState) noexcept
-            {
-                size_t oldTaggedValue = oldTagged.getTaggedValue();
-                size_t newTaggedValue =
-                    oldTagged
-                    .changePtr(task)
-                    .changeModifyState(targetState)
-                    .getTaggedValue();
-
-                if (!taggedTask
-                    .compare_exchange_strong(oldTaggedValue, newTaggedValue))
-                    return false;
-            }
             // WAIT_FREE_UTILS
             #pragma endregion
-
+    
         private:
             static constexpr uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
             static constexpr uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
