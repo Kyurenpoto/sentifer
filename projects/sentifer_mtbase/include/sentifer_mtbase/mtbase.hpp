@@ -15,6 +15,10 @@ namespace mtbase
 #define MTBASE_MAX_THREAD 16
 #endif
 
+    constexpr size_t BASE_ALIGN = alignof(void*);
+
+    static_assert(BASE_ALIGN == 8, "mtbase is only available on x64");
+
     namespace tls_variables
     {
         static int createThreadId()
@@ -157,8 +161,6 @@ namespace mtbase
 
     inline namespace schedulers
     {
-        constexpr size_t BASE_ALIGN = alignof(void*);
-
         struct alignas(BASE_ALIGN) task_t
         {
 
