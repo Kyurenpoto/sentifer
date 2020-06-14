@@ -425,91 +425,204 @@ namespace mtbase
             #pragma endregion
 
         private:
+            struct fragmented_index
+            {
+                bool isFull() const noexcept
+                {
+                    return (front + REAL_SIZE - back) % REAL_SIZE == 1;
+                }
+
+                bool isEmpty() const noexcept
+                {
+                    return (back + REAL_SIZE - front) % REAL_SIZE == 1;
+                }
+
+                bool isValidIndex() const noexcept
+                {
+                    return front != back;
+                }
+
+                fragmented_index pushed_front() const noexcept
+                {
+                    return fragmented_index
+                    {
+                        .front = (front + REAL_SIZE - 1) % REAL_SIZE,
+                        .back = back
+                    };
+                }
+
+                fragmented_index pushed_back() const noexcept
+                {
+                    return fragmented_index
+                    {
+                        .front = front,
+                        .back = (back + 1) % REAL_SIZE
+                    };
+                }
+
+                fragmented_index poped_front() const noexcept
+                {
+                    return fragmented_index
+                    {
+                        .front = (front + 1) % REAL_SIZE,
+                        .back = back
+                    };
+                }
+
+                fragmented_index poped_back() const noexcept
+                {
+                    return fragmented_index
+                    {
+                        .front = front,
+                        .back = (back + REAL_SIZE - 1) % REAL_SIZE
+                    };
+                }
+
+            public:
+                static constexpr uint64_t INIT_FRONT = 0;
+                static constexpr uint64_t INIT_BACK = 1;
+
+                uint64_t front = INIT_FRONT;
+                uint64_t back = INIT_BACK;
+            };
+
+            struct combined_index
+            {
+                fragmented_index getOldIndex() const noexcept
+                {
+                    uint64_t oldIndex = index.load();
+
+                    return fragmented_index
+                    {
+                        .front = (oldIndex & MASK_FRONT) >> SHIFT_FRONT,
+                        .back = (oldIndex & MASK_FRONT) >> SHIFT_FRONT
+                    };
+                }
+
+                bool setNewIndex(const fragmented_index& oldFragmented, const fragmented_index& newFragmented) noexcept
+                {
+                    uint64_t oldIndex = combineToIndex(oldFragmented);
+                    uint64_t newIndex = combineToIndex(newFragmented);
+
+                    return index.compare_exchange_strong(oldIndex, newIndex);
+                }
+
+            private:
+                uint64_t combineToIndex(const fragmented_index fragmented) const noexcept
+                {
+                    return ((fragmented.front << SHIFT_FRONT) & (fragmented.back << SHIFT_BACK));
+                }
+
+            private:
+                static constexpr uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
+                static constexpr uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
+                static constexpr uint64_t SHIFT_FRONT = 32;
+                static constexpr uint64_t SHIFT_BACK = 0;
+
+                std::atomic_uint64_t index{ combineToIndex(fragmented_index{}) };
+            };
+
             #pragma region WAIT_FREE_FAST_PATH
             bool pushFrontFast(task_t* task)
             {
-                uint64_t oldFront, oldBack;
-                getOldIndex(oldFront, oldBack);
-
-                if (isFull(oldFront, oldBack))
+                fragmented_index oldFragmented{ index.getOldIndex() };
+                if (oldFragmented.isFull())
                     return false;
 
-                const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
+                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.front];
+                const tagged_task_t oldTagged{ taggedTack.load() };
 
-                if (oldFrontTagged.getTag() != PAT_NONE ||
-                    oldFrontTagged.getPtr() != nullptr)
+                if (!isValidPushTagged(oldTagged))
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, (oldFront + REAL_SIZE - 1) % REAL_SIZE, oldBack,
-                    taggedTasks[oldFront], oldFrontTagged);
+                return exchangeFast(task,
+                    oldFragmented, oldFragmented.pushed_front(),
+                    taggedTack, oldTagged);
             }
 
             bool pushBackFast(task_t* task)
             {
-                uint64_t oldFront, oldBack;
-                getOldIndex(oldFront, oldBack);
-
-                if (isFull(oldFront, oldBack))
+                fragmented_index oldFragmented{ index.getOldIndex() };
+                if (oldFragmented.isFull())
                     return false;
 
-                const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
+                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.back];
+                const tagged_task_t oldTagged{ taggedTack.load() };
 
-                if (oldBackTagged.getTag() != PAT_NONE ||
-                    oldBackTagged.getPtr() != nullptr)
+                if (!isValidPushTagged(oldTagged))
                     return false;
 
-                return exchangeFast(task, oldFront, oldBack, oldFront, (oldBack + 1) % REAL_SIZE,
-                    taggedTasks[oldBack], oldBackTagged);
+                return exchangeFast(task,
+                    oldFragmented, oldFragmented.pushed_back(),
+                    taggedTack, oldTagged);
             }
 
             task_t* popFrontFast()
             {
-                uint64_t oldFront, oldBack;
-                getOldIndex(oldFront, oldBack);
-
-                if (isEmpty(oldFront, oldBack))
+                fragmented_index oldFragmented{ index.getOldIndex() };
+                if (oldFragmented.isEmpty())
                     return false;
 
-                const tagged_task_t oldFrontTagged{ taggedTasks[oldFront].load() };
+                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.front];
+                const tagged_task_t oldTagged{ taggedTack.load() };
 
-                if (oldFrontTagged.getTag() != PAT_NONE ||
-                    oldFrontTagged.getPtr() == nullptr)
+                if (!isValidPopTagged(oldTagged))
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, (oldFront + 1) % REAL_SIZE, oldBack,
-                    taggedTasks[oldFront], oldFrontTagged) ?
-                    oldFrontTagged.getPtr() : nullptr;
+                return getTaskIfSuccessed
+                (
+                    exchangeFast(nullptr,
+                        oldFragmented, oldFragmented.poped_front(),
+                        taggedTack, oldTagged) ?
+                    oldTagged.getPtr() : nullptr;
+                );
             }
 
             task_t* popBackFast()
             {
-                uint64_t oldFront, oldBack;
-                getOldIndex(oldFront, oldBack);
-
-                if (isEmpty(oldFront, oldBack))
+                fragmented_index oldFragmented{ index.getOldIndex() };
+                if (oldFragmented.isEmpty())
                     return false;
 
-                const tagged_task_t oldBackTagged{ taggedTasks[oldBack].load() };
+                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.back];
+                const tagged_task_t oldTagged{ taggedTack.load() };
 
-                if (oldBackTagged.getTag() != PAT_NONE ||
-                    oldBackTagged.getPtr() == nullptr)
+                if (!isValidPopTagged(oldTagged))
                     return false;
 
-                return exchangeFast(nullptr, oldFront, oldBack, oldFront, (oldBack + REAL_SIZE - 1) % REAL_SIZE,
-                    taggedTasks[oldBack], oldBackTagged) ?
-                    oldBackTagged.getPtr() : nullptr;
+                return getTaskIfSuccessed
+                (
+                    exchangeFast(nullptr,
+                    oldFragmented, oldFragmented.poped_back(),
+                    taggedTack, oldTagged)
+                );
+            }
+
+            bool isValidPushTagged(const tagged_task_t& tagged) const noexcept
+            {
+                return tagged.getTag() == PAT_NONE &&
+                    tagged.getPtr() == nullptr;
+            }
+
+            bool isValidPopTagged(const tagged_task_t& tagged) const noexcept
+            {
+                return tagged.getTag() == PAT_NONE &&
+                    tagged.getPtr() != nullptr;
+            }
+
+            task_t* getTaskIfSuccessed(const tagged_task_t tagged, bool success)
+            {
+                return success ? tagged.getPtr() : nullptr;
             }
 
             bool exchangeFast(
                 task_t* task,
-                const uint64_t oldFront,
-                const uint64_t oldBack,
-                const uint64_t newFront,
-                const uint64_t newBack,
+                const fragmented_index& oldFragmented,
+                const fragmented_index& newFragmented,
                 std::atomic_size_t& taggedTask,
                 const tagged_task_t oldTagged)
             {
-                if (!isValidIndex(newFront, newBack))
+                if (!newFragmented.isValidIndex())
                     return false;
 
                 if (!oldTagged.commitTag(taggedTask, PAT_RESERVE))
@@ -536,7 +649,7 @@ namespace mtbase
                     .getTaggedValue()
                 };
 
-                if (!setNewIndex(oldFront, oldBack, newFront, newBack))
+                if (!index.setNewIndex(oldFragmented, newFragmented))
                 {
                     task_t* oldTask = oldTagged.getPtr();
 
@@ -565,48 +678,10 @@ namespace mtbase
             task_t* popBackSlow();
             // WAIT_FREE_SLOW_PATH
             #pragma endregion
-
-            #pragma region WAIT_FREE_UTILS
-            bool isFull(const uint64_t oldFront, const uint64_t oldBack) const noexcept
-            {
-                return (oldFront + REAL_SIZE - oldBack) % REAL_SIZE == 1;
-            }
-
-            bool isEmpty(const uint64_t oldFront, const uint64_t oldBack) const noexcept
-            {
-                return (oldBack + REAL_SIZE - oldFront) % REAL_SIZE == 1;
-            }
-
-            bool isValidIndex(const uint64_t newFront, const uint64_t newBack) const noexcept
-            {
-                return newFront != newBack;
-            }
-
-            void getOldIndex(uint64_t& oldFront, uint64_t& oldBack) const noexcept
-            {
-                uint64_t oldIndex = index.load();
                 
-                oldFront = (oldIndex & MASK_FRONT) >> SHIFT_FRONT;
-                oldBack = (oldIndex & MASK_BACK) >> SHIFT_BACK;
-            }
-
-            bool setNewIndex(const uint64_t oldFront, const uint64_t oldBack, const uint64_t newFront, const uint64_t newBack)
-            {
-                uint64_t oldIndex = (oldFront << SHIFT_FRONT) & (oldBack << SHIFT_BACK);
-                uint64_t newIndex = (newFront << SHIFT_FRONT) & (newBack << SHIFT_BACK);
-
-                return index.compare_exchange_strong(oldIndex, newIndex);
-            }
-            // WAIT_FREE_UTILS
-            #pragma endregion
-    
         private:
-            static constexpr uint64_t MASK_FRONT = 0xFFFF'FFFF'0000'0000ULL;
-            static constexpr uint64_t MASK_BACK = 0x0000'0000'FFFF'FFFFULL;
-            static constexpr uint64_t SHIFT_FRONT = 32;
-            static constexpr uint64_t SHIFT_BACK = 0;
             static constexpr int MAX_RETRY_FAST = 4;
-            std::atomic_uint64_t index;
+            combined_index index;
             mi_memory_resource& resource;
             std::array<std::atomic_size_t, REAL_SIZE> taggedTasks;
         };
