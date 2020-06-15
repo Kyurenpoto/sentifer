@@ -401,7 +401,7 @@ namespace mtbase
             bool pushFront(task_t* task)
             {
                 for (int i = 0; i < MAX_RETRY_FAST; ++i)
-                    if (pushFrontFast(task))
+                    if (fastPath.pushFront(task))
                         return true;
 
                 return pushFrontSlow(task);
@@ -410,7 +410,7 @@ namespace mtbase
             bool pushBack(task_t* task)
             {
                 for (int i = 0; i < MAX_RETRY_FAST; ++i)
-                    if (pushBackFast(task))
+                    if (fastPath.pushBack(task))
                         return true;
 
                 return pushBackSlow(task);
@@ -420,7 +420,7 @@ namespace mtbase
             {
                 for (int i = 0; i < MAX_RETRY_FAST; ++i)
                 {
-                    task_t* result = popFrontFast();
+                    task_t* result = fastPath.popFront();
                     if (result != nullptr)
                         return result;
                 }
@@ -432,7 +432,7 @@ namespace mtbase
             {
                 for (int i = 0; i < MAX_RETRY_FAST; ++i)
                 {
-                    task_t* result = popBackFast();
+                    task_t* result = fastPath.popBack();
                     if (result != nullptr)
                         return result;
                 }
@@ -540,7 +540,6 @@ namespace mtbase
                 std::atomic_uint64_t index{ combineToIndex(fragmented_index{}) };
             };
 
-            #pragma region WAIT_FREE_FAST_PATH
             struct CAS_fast
             {
                 bool operator() () noexcept
@@ -605,141 +604,147 @@ namespace mtbase
                 const tagged_task_t oldTagged;
             };
 
-            bool pushFrontFast(task_t* task)
+            struct fast_path
             {
-                fragmented_index oldFragmented{ index.getOldIndex() };
-                if (oldFragmented.isFull())
-                    return false;
-                
-                fragmented_index newFragmented{ oldFragmented.pushed_front() };
-                if (newFragmented.isValidIndex())
-                    return false;
-
-                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
-                const tagged_task_t oldTagged{ taggedTask.load() };
-
-                if (!isValidPushTagged(oldTagged))
-                    return false;
-
-                return CAS_fast
+                bool pushFront(task_t* task)
                 {
-                    .index = index,
-                    .newTask = task,
-                    .oldFragmented = oldFragmented,
-                    .newFragmented = newFragmented,
-                    .taggedTask = taggedTask,
-                    .oldTagged = oldTagged
-                }();
-            }
+                    fragmented_index oldFragmented{ index.getOldIndex() };
+                    if (oldFragmented.isFull())
+                        return false;
 
-            bool pushBackFast(task_t* task)
-            {
-                fragmented_index oldFragmented{ index.getOldIndex() };
-                if (oldFragmented.isFull())
-                    return false;
+                    fragmented_index newFragmented{ oldFragmented.pushed_front() };
+                    if (newFragmented.isValidIndex())
+                        return false;
 
-                fragmented_index newFragmented{ oldFragmented.pushed_back() };
-                if (newFragmented.isValidIndex())
-                    return false;
+                    std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
+                    const tagged_task_t oldTagged{ taggedTask.load() };
 
-                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
-                const tagged_task_t oldTagged{ taggedTask.load() };
+                    if (!isValidPushTagged(oldTagged))
+                        return false;
 
-                if (!isValidPushTagged(oldTagged))
-                    return false;
-
-                return CAS_fast
-                {
-                    .index = index,
-                    .newTask = task,
-                    .oldFragmented = oldFragmented,
-                    .newFragmented = newFragmented,
-                    .taggedTask = taggedTask,
-                    .oldTagged = oldTagged
-                }();
-            }
-
-            task_t* popFrontFast()
-            {
-                fragmented_index oldFragmented{ index.getOldIndex() };
-                if (oldFragmented.isEmpty())
-                    return false;
-
-                fragmented_index newFragmented{ oldFragmented.poped_front() };
-                if (newFragmented.isValidIndex())
-                    return false;
-
-                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
-                const tagged_task_t oldTagged{ taggedTask.load() };
-
-                if (!isValidPopTagged(oldTagged))
-                    return false;
-
-                return getTaskIfSuccessed
-                (
-                    oldTagged,
-                    CAS_fast
+                    return CAS_fast
                     {
                         .index = index,
-                        .newTask = nullptr,
+                        .newTask = task,
                         .oldFragmented = oldFragmented,
                         .newFragmented = newFragmented,
                         .taggedTask = taggedTask,
                         .oldTagged = oldTagged
-                    }()
-                );
-            }
+                    }();
+                }
 
-            task_t* popBackFast()
-            {
-                fragmented_index oldFragmented{ index.getOldIndex() };
-                if (oldFragmented.isEmpty())
-                    return false;
+                bool pushBack(task_t* task)
+                {
+                    fragmented_index oldFragmented{ index.getOldIndex() };
+                    if (oldFragmented.isFull())
+                        return false;
 
-                fragmented_index newFragmented{ oldFragmented.poped_back() };
-                if (newFragmented.isValidIndex())
-                    return false;
+                    fragmented_index newFragmented{ oldFragmented.pushed_back() };
+                    if (newFragmented.isValidIndex())
+                        return false;
 
-                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
-                const tagged_task_t oldTagged{ taggedTask.load() };
+                    std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
+                    const tagged_task_t oldTagged{ taggedTask.load() };
 
-                if (!isValidPopTagged(oldTagged))
-                    return false;
+                    if (!isValidPushTagged(oldTagged))
+                        return false;
 
-                return getTaskIfSuccessed
-                (
-                    oldTagged,
-                    CAS_fast
+                    return CAS_fast
                     {
                         .index = index,
-                        .newTask = nullptr,
+                        .newTask = task,
                         .oldFragmented = oldFragmented,
                         .newFragmented = newFragmented,
                         .taggedTask = taggedTask,
                         .oldTagged = oldTagged
-                    }()
-                );
-            }
+                    }();
+                }
 
-            bool isValidPushTagged(const tagged_task_t& tagged) const noexcept
-            {
-                return tagged.getTag() == PAT_NONE &&
-                    tagged.getPtr() == nullptr;
-            }
+                task_t* popFront()
+                {
+                    fragmented_index oldFragmented{ index.getOldIndex() };
+                    if (oldFragmented.isEmpty())
+                        return false;
 
-            bool isValidPopTagged(const tagged_task_t& tagged) const noexcept
-            {
-                return tagged.getTag() == PAT_NONE &&
-                    tagged.getPtr() != nullptr;
-            }
+                    fragmented_index newFragmented{ oldFragmented.poped_front() };
+                    if (newFragmented.isValidIndex())
+                        return false;
 
-            task_t* getTaskIfSuccessed(const tagged_task_t tagged, bool success)
-            {
-                return success ? tagged.getPtr() : nullptr;
-            }
-            // WAIT_FREE_FAST_PATH
-            #pragma endregion
+                    std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
+                    const tagged_task_t oldTagged{ taggedTask.load() };
 
+                    if (!isValidPopTagged(oldTagged))
+                        return false;
+
+                    return getTaskIfSuccessed
+                    (
+                        oldTagged,
+                        CAS_fast
+                        {
+                            .index = index,
+                            .newTask = nullptr,
+                            .oldFragmented = oldFragmented,
+                            .newFragmented = newFragmented,
+                            .taggedTask = taggedTask,
+                            .oldTagged = oldTagged
+                        }()
+                    );
+                }
+
+                task_t* popBack()
+                {
+                    fragmented_index oldFragmented{ index.getOldIndex() };
+                    if (oldFragmented.isEmpty())
+                        return false;
+
+                    fragmented_index newFragmented{ oldFragmented.poped_back() };
+                    if (newFragmented.isValidIndex())
+                        return false;
+
+                    std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
+                    const tagged_task_t oldTagged{ taggedTask.load() };
+
+                    if (!isValidPopTagged(oldTagged))
+                        return false;
+
+                    return getTaskIfSuccessed
+                    (
+                        oldTagged,
+                        CAS_fast
+                        {
+                            .index = index,
+                            .newTask = nullptr,
+                            .oldFragmented = oldFragmented,
+                            .newFragmented = newFragmented,
+                            .taggedTask = taggedTask,
+                            .oldTagged = oldTagged
+                        }()
+                    );
+                }
+
+            private:
+                bool isValidPushTagged(const tagged_task_t& tagged) const noexcept
+                {
+                    return tagged.getTag() == PAT_NONE &&
+                        tagged.getPtr() == nullptr;
+                }
+
+                bool isValidPopTagged(const tagged_task_t& tagged) const noexcept
+                {
+                    return tagged.getTag() == PAT_NONE &&
+                        tagged.getPtr() != nullptr;
+                }
+
+                task_t* getTaskIfSuccessed(const tagged_task_t tagged, bool success)
+                {
+                    return success ? tagged.getPtr() : nullptr;
+                }
+
+            public:
+                combined_index& index;
+                std::array<std::atomic_size_t, REAL_SIZE>& taggedTasks;
+            };
+            
             #pragma region WAIT_FREE_SLOW_PATH
             bool pushFrontSlow(task_t* task)
             {
@@ -758,6 +763,11 @@ namespace mtbase
             static constexpr int MAX_RETRY_FAST = 4;
             combined_index index;
             std::array<std::atomic_size_t, REAL_SIZE> taggedTasks;
+            fast_path fastPath
+            {
+                .index = index,
+                .taggedTasks = taggedTasks
+            };
         };
 
         static task_scheduler<(1 << 20)> tmp;
