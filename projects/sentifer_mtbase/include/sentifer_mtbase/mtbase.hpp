@@ -187,6 +187,28 @@ namespace mtbase
                 taggedValue{ tagged }
             {}
 
+            tagged_ptr(const tagged_ptr& other) :
+                tagged_ptr{ other.taggedValue }
+            {}
+
+            tagged_ptr(const tagged_ptr&& other) :
+                tagged_ptr{ other.taggedValue }
+            {}
+
+            tagged_ptr& operator= (const tagged_ptr& other)
+            {
+                taggedValue = other.taggedValue;
+
+                return *this;
+            }
+
+            tagged_ptr& operator= (const tagged_ptr&& other)
+            {
+                taggedValue = other.taggedValue;
+
+                return *this;
+            }
+
             PTR_ACCESS_TAG getTag() const noexcept
             {
                 return static_cast<PTR_ACCESS_TAG>((taggedValue & MASK_TAG));
@@ -217,7 +239,7 @@ namespace mtbase
                 .changeTag(getTag());
             }
 
-            bool commitTag(std::atomic_size_t& taggedPtr, PTR_ACCESS_TAG tag) noexcept
+            bool commitTag(std::atomic_size_t& taggedPtr, PTR_ACCESS_TAG tag) const noexcept
             {
                 size_t oldTaggedValue = getTaggedValue();
                 size_t newTaggedValue = changeTag(tag)
