@@ -4,6 +4,7 @@
 #include <chrono>
 #include <atomic>
 #include <array>
+#include <optional>
 
 #include "mimalloc.h"
 
@@ -281,8 +282,124 @@ namespace mtbase
             static constexpr size_t MASK_EXCEPT_TAG = 0xFFFF'FFFF'FFFF'FFF8ULL;
         };
 
-        struct task_scheduler_base
+        template<class T, size_t SIZE>
+        struct ref_count_arr
         {
+            std::optional<T> load(const size_t idx) noexcept
+            {
+                std::optional<T> result = std::nullopt;
+
+                while (!tryRead(idx));
+                
+                result = arr[idx];
+                releaseRead(idx);
+
+                return result;
+            }
+
+            void store(const size_t idx, const T value) noexcept
+            {
+                while (!tryWrite(idx));
+
+                arr[idx] = value;
+                releaseWrite(idx);
+            }
+
+            bool compare_exchange(const size_t idx, T& expected, const T desired) noexcept
+            {
+                if (tryRead(idx))
+                {
+                    expected = arr[idx];
+                    bool result = (arr[idx] == expected);
+                    releaseRead(idx);
+
+                    if (!result)
+                        return false;
+                }
+
+                while (!tryWrite(idx));
+
+                if (arr[idx] == expected)
+                    arr[idx] = desired;
+
+                releaseWrite(idx);
+
+                return result;
+            }
+
+            template<class Func>
+            bool compare_exchange(const size_t idx, T& expected, const T desired, Func func) noexcept
+            {
+                if (tryRead(idx))
+                {
+                    expected = arr[idx];
+                    bool result = (arr[idx] == expected);
+                    releaseRead(idx);
+
+                    if (!result)
+                        return false;
+                }
+
+                while (!tryWrite(idx));
+
+                if (arr[idx] == expected)
+                {
+                    arr[idx] = desired;
+                    func();
+                }
+
+                releaseWrite(idx);
+
+                return result;
+            }
+
+        private:
+            bool tryRead(const size_t idx) noexcept
+            {
+                size_t oldRefCount = refCounts[idx].load();
+                size_t newRefCount = oldRefCount + 1;
+                while (oldRefCount != WRITE_REF_COUNT &&
+                    refCounts[idx].compare_exchange_strong(oldRefCount, newRefCount))
+                    newRefCount = oldRefCount + 1;
+
+                return oldRefCount != WRITE_REF_COUNT;
+            }
+
+            void releaseRead(const size_t idx) noexcept
+            {
+                size_t oldRefCount = refCounts[idx].load();
+                size_t newRefCount = oldRefCount - 1;
+                while (oldRefCount != WRITE_REF_COUNT &&
+                    oldRefCount != READY_REF_COUNT &&
+                    refCounts[idx].compare_exchange_strong(oldRefCount, newRefCount))
+                    newRefCount = oldRefCount - 1;
+            }
+
+            bool tryWrite(const size_t idx) noexcept
+            {
+                size_t oldRefCount = refCounts[idx].load();
+                while (oldRefCount == READY_REF_COUNT &&
+                    refCounts[idx].compare_exchange_strong(oldRefCount, WRITE_REF_COUNT));
+
+                return oldRefCount != WRITE_REF_COUNT;
+            }
+
+            void releaseWrite(const size_t idx) noexcept
+            {
+                size_t oldRefCount = refCounts[idx].load();
+                while (oldRefCount == WRITE_REF_COUNT &&
+                    refCounts[idx].compare_exchange_strong(oldRefCount, READY_REF_COUNT));
+            }
+
+        private:
+            std::array<T, SIZE> arr;
+            std::array<std::atomic_size_t, SIZE> refCounts;
+            static constexpr size_t READY_REF_COUNT = 0;
+            static constexpr size_t WRITE_REF_COUNT = 0xFFFF'FFFF'FFFF'FFFF;
+        };
+
+        struct task_scheduler_base
+        {/*
         protected:
             void help()
             {
@@ -294,42 +411,6 @@ namespace mtbase
             }
 
         protected:
-            using tagged_task_t = tagged_ptr<task_t*>;
-
-            struct alignas(BASE_ALIGN * 8) slow_op_desc
-            {
-                enum OP_PHASE :
-                    size_t
-                {
-                    OP_BEGIN,
-                    OP_RESERVE,
-                    OP_COMMIT,
-                    OP_MOVE,
-                    OP_END
-                };
-
-                enum OP_KIND :
-                    size_t
-                {
-                    OK_NONE,
-                    OK_PUSH_FRONT,
-                    OK_PUSH_BACK,
-                    OK_POP_FRONT,
-                    OK_POP_BACK
-                };
-
-                OP_PHASE phase = OP_BEGIN;
-                OP_KIND op = OK_NONE;
-                uint64_t oldFront = 0;
-                uint64_t oldBack = 0;
-                uint64_t newFront = 0;
-                uint64_t newBack = 0;
-                tagged_task_t oldTagged;
-                task_t* task = nullptr;
-            };
-
-            using tagged_slow_op_desc = tagged_ptr<slow_op_desc*>;
-
             struct help_record
             {
                 void reset(std::array<std::atomic_size_t, MTBASE_MAX_THREAD>& taggedDescs)
@@ -373,7 +454,7 @@ namespace mtbase
 
             std::array<slow_op_desc, MTBASE_MAX_THREAD> descs;
             std::array<std::atomic_size_t, MTBASE_MAX_THREAD> taggedDescs;
-            std::array<help_record, MTBASE_MAX_THREAD> helpRecords;
+            std::array<help_record, MTBASE_MAX_THREAD> helpRecords;*/
         };
 
         template<std::uint32_t SIZE>
@@ -385,6 +466,8 @@ namespace mtbase
             static_assert(SIZE >= 64U);
 
             static constexpr uint32_t REAL_SIZE = SIZE + 2;
+
+            using tagged_task_t = tagged_ptr<task_t*>;
 
             ~task_scheduler()
             {
@@ -746,6 +829,27 @@ namespace mtbase
             };
             
             #pragma region WAIT_FREE_SLOW_PATH
+            struct alignas(BASE_ALIGN) slow_op_desc
+            {
+                enum OP_PHASE :
+                    size_t
+                {
+                    OP_BEGIN,
+                    OP_RESERVE,
+                    OP_COMMIT,
+                    OP_MOVE,
+                    OP_END
+                };
+
+                OP_PHASE phase = OP_BEGIN;
+                fragmented_index oldFragmented;
+                fragmented_index newFragmented;
+                tagged_task_t oldTagged;
+                task_t* task = nullptr;
+            };
+
+            using tagged_slow_op_desc = tagged_ptr<slow_op_desc*>;
+
             bool pushFrontSlow(task_t* task)
             {
 
