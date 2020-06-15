@@ -547,19 +547,19 @@ namespace mtbase
                 {
                     const tagged_task_t taggedReserve =
                         oldTagged.changeTag(PAT_RESERVE);
-                    const tagged_task_t taggedChangeTask =
+                    const tagged_task_t taggedCommit =
                         taggedReserve.changePtr(newTask);
 
                     if (!tryReserveTaskFast())
                         return false;
 
-                    if (!tryChangeTaskFast(taggedReserve))
+                    if (!tryCommitTaskFast(taggedReserve))
                         return false;
 
-                    if (!tryCommitIndexFast(taggedChangeTask))
+                    if (!tryMoveIndexFast(taggedCommit))
                         return false;
 
-                    releaseTaskFast(taggedChangeTask);
+                    releaseTaskFast(taggedCommit);
 
                     return true;
                 }
@@ -570,7 +570,7 @@ namespace mtbase
                     return oldTagged.commitTag(taggedTask, PAT_RESERVE);
                 }
 
-                bool tryChangeTaskFast(const tagged_task_t& taggedReserve) noexcept
+                bool tryCommitTaskFast(const tagged_task_t& taggedReserve) noexcept
                 {
                     if (taggedReserve.commitPtr(taggedTask, newTask))
                         return true;
@@ -580,20 +580,20 @@ namespace mtbase
                     return false;
                 }
 
-                bool tryCommitIndexFast(const tagged_task_t& taggedChangeTask) noexcept
+                bool tryMoveIndexFast(const tagged_task_t& taggedCommit) noexcept
                 {
                     if (index.setNewIndex(oldFragmented, newFragmented))
                         return true;
 
                     task_t* oldTask = oldTagged.getPtr();
-                    while (!taggedChangeTask.commit(taggedTask, oldTask, PAT_NONE));
+                    while (!taggedCommit.commit(taggedTask, oldTask, PAT_NONE));
 
                     return false;
                 }
 
-                void releaseTaskFast(const tagged_task_t& taggedChangeTask) noexcept
+                void releaseTaskFast(const tagged_task_t& taggedCommit) noexcept
                 {
-                    while (!taggedChangeTask.commitTag(taggedTask, PAT_NONE));
+                    while (!taggedCommit.commitTag(taggedTask, PAT_NONE));
                 }
 
             public:
