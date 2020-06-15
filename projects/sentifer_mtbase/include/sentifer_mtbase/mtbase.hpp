@@ -386,18 +386,14 @@ namespace mtbase
 
             static constexpr uint32_t REAL_SIZE = SIZE + 2;
 
-            task_scheduler(mi_memory_resource& res) :
-                resource{ res }
-            {}
-
             ~task_scheduler()
             {
                 for (auto& taggedTask : taggedTasks)
                 {
                     task_t* task = tagged_task_t{ taggedTask.load() }.getPtr();
 
-                    if (task != nullptr)
-                        resource.deallocate(task, sizeof(task_t), alignof(task_t));
+                    /*if (task != nullptr)
+                        resource.deallocate(task, sizeof(task_t), alignof(task_t));*/
                 }
             }
 
@@ -545,21 +541,95 @@ namespace mtbase
             };
 
             #pragma region WAIT_FREE_FAST_PATH
+            struct CAS_fast
+            {
+                bool operator() () noexcept
+                {
+                    const tagged_task_t taggedReserve =
+                        oldTagged.changeTag(PAT_RESERVE);
+                    const tagged_task_t taggedChangeTask =
+                        taggedReserve.changePtr(newTask);
+
+                    if (!tryReserveTaskFast())
+                        return false;
+
+                    if (!tryChangeTaskFast(taggedReserve))
+                        return false;
+
+                    if (!tryCommitIndexFast(taggedChangeTask))
+                        return false;
+
+                    releaseTaskFast(taggedChangeTask);
+
+                    return true;
+                }
+
+            private:
+                bool tryReserveTaskFast() noexcept
+                {
+                    return oldTagged.commitTag(taggedTask, PAT_RESERVE);
+                }
+
+                bool tryChangeTaskFast(const tagged_task_t& taggedReserve) noexcept
+                {
+                    if (taggedReserve.commitPtr(taggedTask, newTask))
+                        return true;
+
+                    while (!taggedReserve.commitTag(taggedTask, PAT_NONE));
+
+                    return false;
+                }
+
+                bool tryCommitIndexFast(const tagged_task_t& taggedChangeTask) noexcept
+                {
+                    if (index.setNewIndex(oldFragmented, newFragmented))
+                        return true;
+
+                    task_t* oldTask = oldTagged.getPtr();
+                    while (!taggedChangeTask.commit(taggedTask, oldTask, PAT_NONE));
+
+                    return false;
+                }
+
+                void releaseTaskFast(const tagged_task_t& taggedChangeTask) noexcept
+                {
+                    while (!taggedChangeTask.commitTag(taggedTask, PAT_NONE));
+                }
+
+            public:
+                combined_index& index;
+                task_t* newTask;
+                const fragmented_index& oldFragmented;
+                const fragmented_index& newFragmented;
+                std::atomic_size_t& taggedTask;
+                const tagged_task_t oldTagged;
+            };
+
             bool pushFrontFast(task_t* task)
             {
                 fragmented_index oldFragmented{ index.getOldIndex() };
                 if (oldFragmented.isFull())
                     return false;
+                
+                fragmented_index newFragmented{ oldFragmented.pushed_front() };
+                if (newFragmented.isValidIndex())
+                    return false;
 
-                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.front];
-                const tagged_task_t oldTagged{ taggedTack.load() };
+                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
+                const tagged_task_t oldTagged{ taggedTask.load() };
 
                 if (!isValidPushTagged(oldTagged))
                     return false;
 
-                return exchangeFast(task,
-                    oldFragmented, oldFragmented.pushed_front(),
-                    taggedTack, oldTagged);
+                return CAS_fast
+                {
+                    .index = index,
+                    .newTask = task,
+                    .oldFragmented = oldFragmented,
+                    .newFragmented = newFragmented,
+                    .taggedTask = taggedTask,
+                    .oldTagged = oldTagged
+                }();
             }
 
             bool pushBackFast(task_t* task)
@@ -568,15 +638,25 @@ namespace mtbase
                 if (oldFragmented.isFull())
                     return false;
 
-                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.back];
-                const tagged_task_t oldTagged{ taggedTack.load() };
+                fragmented_index newFragmented{ oldFragmented.pushed_back() };
+                if (newFragmented.isValidIndex())
+                    return false;
+
+                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
+                const tagged_task_t oldTagged{ taggedTask.load() };
 
                 if (!isValidPushTagged(oldTagged))
                     return false;
 
-                return exchangeFast(task,
-                    oldFragmented, oldFragmented.pushed_back(),
-                    taggedTack, oldTagged);
+                return CAS_fast
+                {
+                    .index = index,
+                    .newTask = task,
+                    .oldFragmented = oldFragmented,
+                    .newFragmented = newFragmented,
+                    .taggedTask = taggedTask,
+                    .oldTagged = oldTagged
+                }();
             }
 
             task_t* popFrontFast()
@@ -585,18 +665,28 @@ namespace mtbase
                 if (oldFragmented.isEmpty())
                     return false;
 
-                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.front];
-                const tagged_task_t oldTagged{ taggedTack.load() };
+                fragmented_index newFragmented{ oldFragmented.poped_front() };
+                if (newFragmented.isValidIndex())
+                    return false;
+
+                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.front];
+                const tagged_task_t oldTagged{ taggedTask.load() };
 
                 if (!isValidPopTagged(oldTagged))
                     return false;
 
                 return getTaskIfSuccessed
                 (
-                    exchangeFast(nullptr,
-                        oldFragmented, oldFragmented.poped_front(),
-                        taggedTack, oldTagged) ?
-                    oldTagged.getPtr() : nullptr;
+                    oldTagged,
+                    CAS_fast
+                    {
+                        .index = index,
+                        .newTask = nullptr,
+                        .oldFragmented = oldFragmented,
+                        .newFragmented = newFragmented,
+                        .taggedTask = taggedTask,
+                        .oldTagged = oldTagged
+                    }()
                 );
             }
 
@@ -606,17 +696,28 @@ namespace mtbase
                 if (oldFragmented.isEmpty())
                     return false;
 
-                std::atomic_size_t& taggedTack = taggedTasks[oldFragmented.back];
-                const tagged_task_t oldTagged{ taggedTack.load() };
+                fragmented_index newFragmented{ oldFragmented.poped_back() };
+                if (newFragmented.isValidIndex())
+                    return false;
+
+                std::atomic_size_t& taggedTask = taggedTasks[oldFragmented.back];
+                const tagged_task_t oldTagged{ taggedTask.load() };
 
                 if (!isValidPopTagged(oldTagged))
                     return false;
 
                 return getTaskIfSuccessed
                 (
-                    exchangeFast(nullptr,
-                    oldFragmented, oldFragmented.poped_back(),
-                    taggedTack, oldTagged)
+                    oldTagged,
+                    CAS_fast
+                    {
+                        .index = index,
+                        .newTask = nullptr,
+                        .oldFragmented = oldFragmented,
+                        .newFragmented = newFragmented,
+                        .taggedTask = taggedTask,
+                        .oldTagged = oldTagged
+                    }()
                 );
             }
 
@@ -635,54 +736,6 @@ namespace mtbase
             task_t* getTaskIfSuccessed(const tagged_task_t tagged, bool success)
             {
                 return success ? tagged.getPtr() : nullptr;
-            }
-
-            bool exchangeFast(
-                task_t* task,
-                const fragmented_index& oldFragmented,
-                const fragmented_index& newFragmented,
-                std::atomic_size_t& taggedTask,
-                const tagged_task_t oldTagged)
-            {
-                if (!newFragmented.isValidIndex())
-                    return false;
-
-                if (!oldTagged.commitTag(taggedTask, PAT_RESERVE))
-                    return false;
-
-                const tagged_task_t newTaggedReserve
-                {
-                    oldTagged
-                    .changeTag(PAT_RESERVE)
-                    .getTaggedValue()
-                };
-
-                if (!newTaggedReserve.commitPtr(taggedTask, task))
-                {
-                    while (!newTaggedReserve.commitTag(taggedTask, PAT_NONE));
-
-                    return false;
-                }
-
-                const tagged_task_t newTaggedCommit
-                {
-                    newTaggedReserve
-                    .changePtr(task)
-                    .getTaggedValue()
-                };
-
-                if (!index.setNewIndex(oldFragmented, newFragmented))
-                {
-                    task_t* oldTask = oldTagged.getPtr();
-
-                    while (!newTaggedCommit.commit(taggedTask, oldTask, PAT_NONE));
-
-                    return false;
-                }
-
-                while (!newTaggedCommit.commitTag(taggedTask, PAT_NONE));
-
-                return true;
             }
             // WAIT_FREE_FAST_PATH
             #pragma endregion
@@ -704,11 +757,9 @@ namespace mtbase
         private:
             static constexpr int MAX_RETRY_FAST = 4;
             combined_index index;
-            mi_memory_resource& resource;
             std::array<std::atomic_size_t, REAL_SIZE> taggedTasks;
         };
 
-        static mi_memory_resource res;
-        static task_scheduler<(1 << 20)> tmp(res);
+        static task_scheduler<(1 << 20)> tmp;
     }
 }
