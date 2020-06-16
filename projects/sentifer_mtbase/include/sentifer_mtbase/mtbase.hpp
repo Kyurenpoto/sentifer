@@ -363,10 +363,16 @@ namespace mtbase
                 op_description* oldDesc = desc;
                 while (true)
                 {
-                    // process
+                    if (!tryCommitTask(oldDesc))
+                        continue;
+
+                    if (tryCommitIndex(oldDesc))
+                        break;
+
+                    rollbackTask(oldDesc);
                 }
 
-                // release
+                destroyExpired(oldDesc);
             }
 
             bool tryCommitTask(op_description* const desc)
