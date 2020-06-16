@@ -325,39 +325,17 @@ namespace mtbase
         private:
             bool fast_path(op_description*& desc) noexcept
             {
-                task_t* oldTask = desc->oldTask;
-                if (!desc->target.compare_exchange_strong(oldTask, desc->newTask))
+                if (!tryCommitTask(desc))
                     return false;
 
-                index_t* oldIndex = desc->oldIndex;
-                if (!index.compare_exchange_strong(oldIndex, desc->newIndex))
+                if (!tryCommitIndex(desc))
                 {
-                    desc->target.store(oldTask);
-
-                    op_description* oldDesc = desc;
-                    desc = descAllocator.new_object(op_description
-                        {
-                            .phase = op_description::PHASE::COMPLETE,
-                            .op = oldDesc->op,
-                            .target = oldDesc->target,
-                            .oldIndex = oldIndex
-                        });
-                    descAllocator.delete_object(oldDesc);
+                    rollbackTask(desc);
 
                     return false;
                 }
-
-                indexAllocator.delete_object(oldIndex);
-
-                op_description* oldDesc = desc;
-                desc = descAllocator.new_object(op_description
-                    {
-                        .phase = op_description::PHASE::COMPLETE,
-                        .op = oldDesc->op,
-                        .target = oldDesc->target,
-                        .oldTask = oldTask
-                    });
-                descAllocator.delete_object(oldDesc);
+                
+                destroyExpired(desc);
 
                 return true;
             }
@@ -389,6 +367,51 @@ namespace mtbase
                 }
 
                 // release
+            }
+
+            bool tryCommitTask(op_description* const desc)
+            {
+                task_t* oldTask = desc->oldTask;
+
+                return desc->target.compare_exchange_strong(oldTask, desc->newTask);
+            }
+
+            bool tryCommitIndex(op_description* const desc)
+            {
+                index_t* oldIndex = desc->oldIndex;
+
+                return index.compare_exchange_strong(oldIndex, desc->newIndex);
+            }
+
+            void rollbackTask(op_description*& desc)
+            {
+                desc->target.store(desc->oldTask);
+
+                op_description* oldDesc = desc;
+                desc = descAllocator.new_object(op_description
+                    {
+                        .phase = op_description::PHASE::COMPLETE,
+                        .op = oldDesc->op,
+                        .target = oldDesc->target,
+                        .oldIndex = oldDesc->oldIndex
+                    });
+                descAllocator.delete_object(oldDesc);
+            }
+
+            void destroyExpired(op_description*& desc)
+            {
+                op_description* oldDesc = desc;
+                index_t* oldIndex = oldDesc->oldIndex;
+                indexAllocator.delete_object(oldIndex);
+
+                desc = descAllocator.new_object(op_description
+                    {
+                        .phase = op_description::PHASE::COMPLETE,
+                        .op = oldDesc->op,
+                        .target = oldDesc->target,
+                        .oldTask = oldDesc->oldTask
+                    });
+                descAllocator.delete_object(oldDesc);
             }
 
         private:
