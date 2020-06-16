@@ -271,8 +271,86 @@ namespace mtbase
             static_assert(SIZE <= 0xFFFF'FFFD);
 
         private:
+            enum class OP :
+                size_t
+            {
+                PUSH_FRONT,
+                PUSH_BACK,
+                POP_FRONT,
+                POP_BACK
+            };
+
             struct index_t
             {
+                index_t move(OP op) const noexcept
+                {
+                    switch (op)
+                    {
+                    case OP::PUSH_FRONT:
+                        return pushed_front();
+                    case OP::PUSH_BACK:
+                        return pushed_back();
+                    case OP::POP_FRONT:
+                        return poped_front();
+                    case OP::POP_BACK:
+                        return poped_back();
+                    default:
+                        return index_t{};
+                    }
+                }
+
+                index_t pushed_front() const noexcept
+                {
+                    return index_t
+                    {
+                        .front = (front + REAL_SIZE - 1) % REAL_SIZE,
+                        .back = back
+                    };
+                }
+
+                index_t pushed_back() const noexcept
+                {
+                    return index_t
+                    {
+                        .front = front,
+                        .back = (back + 1) % REAL_SIZE
+                    };
+                }
+
+                index_t poped_front() const noexcept
+                {
+                    return index_t
+                    {
+                        .front = (front + 1) % REAL_SIZE,
+                        .back = back
+                    };
+                }
+
+                index_t poped_back() const noexcept
+                {
+                    return index_t
+                    {
+                        .front = front,
+                        .back = (back + REAL_SIZE - 1) % REAL_SIZE
+                    };
+                }
+
+                bool isFull() const noexcept
+                {
+                    return (front + REAL_SIZE - back) % REAL_SIZE == 1;
+                }
+
+                bool isEmpty() const noexcept
+                {
+                    return (back + REAL_SIZE - front) % REAL_SIZE == 1;
+                }
+
+                bool isValid() const noexcept
+                {
+                    return front != back;
+                }
+
+            public:
                 const size_t front = 0;
                 const size_t back = 1;
             };
@@ -283,24 +361,42 @@ namespace mtbase
                     size_t
                 {
                     RESERVE,
-                    EXECUTE,
-                    COMMIT,
-                    ROLLBACK,
                     COMPLETE
                 };
 
-                enum class OP :
-                    size_t
+            public:
+                op_description rollbacked(
+                    index_t* const oldIndexLoad,
+                    index_t* const newIndexLoad)
+                    const noexcept
                 {
-                    NONE,
-                    PUSH_FRONT,
-                    PUSH_BACK,
-                    POP_FRONT,
-                    POP_BACK
-                };
+                    return op_description
+                    {
+                        .op = op,
+                        .target = target,
+                        .oldTask = oldTask,
+                        .newTask = newTask,
+                        .oldIndex = oldIndexLoad,
+                        .newIndex = newIndexLoad
+                    };
+                }
 
+                op_description completed() const noexcept
+                {
+                    return op_description
+                    {
+                        .phase = op_description::PHASE::COMPLETE,
+                        .op = op,
+                        .target = target,
+                        .oldTask = oldTask,
+                        .newTask = newTask,
+                        .newIndex = newIndex
+                    };
+                }
+
+            public:
                 const PHASE phase{ PHASE::RESERVE };
-                const OP op{ OP::NONE };
+                const OP op{ OP::PUSH_FRONT };
                 std::atomic<task_t*>& target;
                 task_t* const oldTask = nullptr;
                 task_t* const newTask = nullptr;
@@ -394,29 +490,24 @@ namespace mtbase
                 desc->target.store(desc->oldTask);
 
                 op_description* oldDesc = desc;
-                desc = descAllocator.new_object(op_description
-                    {
-                        .phase = op_description::PHASE::COMPLETE,
-                        .op = oldDesc->op,
-                        .target = oldDesc->target,
-                        .oldIndex = oldDesc->oldIndex
-                    });
+                indexAllocator.delete_object(oldDesc->newIndex);
+
+                index_t* const oldIndex = index.load();
+                if (oldDesc->oldIndex != oldIndex)
+                    indexAllocator.delete_object(oldDesc->oldIndex);
+
+                index_t* const newIndex =
+                    indexAllocator.new_object(oldIndex->move(desc->op));
+                desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
                 descAllocator.delete_object(oldDesc);
             }
 
             void destroyExpired(op_description*& desc)
             {
                 op_description* oldDesc = desc;
-                index_t* oldIndex = oldDesc->oldIndex;
-                indexAllocator.delete_object(oldIndex);
+                indexAllocator.delete_object(oldDesc->oldIndex);
 
-                desc = descAllocator.new_object(op_description
-                    {
-                        .phase = op_description::PHASE::COMPLETE,
-                        .op = oldDesc->op,
-                        .target = oldDesc->target,
-                        .oldTask = oldDesc->oldTask
-                    });
+                desc = descAllocator.new_object(oldDesc->completed());
                 descAllocator.delete_object(oldDesc);
             }
 
