@@ -442,7 +442,50 @@ namespace mtbase
 
             ~task_scheduler()
             {
+                indexAllocator.delete_object(index.load());
+                descAllocator.delete_object(registered.load());
+            }
 
+            bool push_front(task_t* task)
+            {
+                op_description* const desc = createDesc(task, OP::PUSH_FRONT);
+
+                bool result = (desc->phase == op_description::PHASE::COMPLETE);
+                descAllocator.delete_object(desc);
+
+                return result;
+            }
+
+            bool push_back(task_t* task)
+            {
+                op_description* const desc = createDesc(task, OP::PUSH_BACK);
+
+                bool result = (desc->phase == op_description::PHASE::COMPLETE);
+                descAllocator.delete_object(desc);
+
+                return result;
+            }
+
+            task_t* pop_front()
+            {
+                op_description* const desc = createDesc(nullptr, OP::POP_FRONT);
+
+                task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
+                        desc->oldTask : nullptr);
+                descAllocator.delete_object(desc);
+
+                return result;
+            }
+
+            task_t* pop_back()
+            {
+                op_description* const desc = createDesc(nullptr, OP::POP_BACK);
+
+                task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
+                    desc->oldTask : nullptr);
+                descAllocator.delete_object(desc);
+
+                return result;
             }
 
         private:
