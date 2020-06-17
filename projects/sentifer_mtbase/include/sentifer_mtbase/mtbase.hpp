@@ -549,7 +549,7 @@ namespace mtbase
                 op_description* oldDesc = nullptr;
                 while (true)
                 {
-                    if (registered.compare_exchange_strong(oldDesc, desc))
+                    if (tryRegister(oldDesc, desc))
                         break;
 
                     if (oldDesc == nullptr)
@@ -581,7 +581,7 @@ namespace mtbase
                         break;
 
                     op_description* oldDesc = rollbackTask(desc);
-                    registerDesc(oldDesc, desc);
+                    renewRegistered(oldDesc, desc);
                 }
             }
 
@@ -594,7 +594,7 @@ namespace mtbase
                 {
                     op_description* oldDesc = desc;
                     desc = descAllocator.new_object(oldDesc->completed(index.load()));
-                    registerDesc(oldDesc, desc);
+                    renewRegistered(oldDesc, desc);
                 }
             }
 
@@ -602,16 +602,20 @@ namespace mtbase
             {
                 task_t* oldTask = desc->oldTask;
 
-                return desc->target.compare_exchange_strong(oldTask, desc->newTask) ||
-                    oldTask == desc->newTask;
+                if (tryEfficientCAS(desc->target, oldTask, desc->newTask))
+                    return true;
+
+                return oldTask == desc->newTask;
             }
 
             bool tryCommitIndex(op_description* const desc) noexcept
             {
                 index_t* oldIndex = desc->oldIndex;
 
-                return index.compare_exchange_strong(oldIndex, desc->newIndex) ||
-                    oldIndex == desc->newIndex;
+                if (tryEfficientCAS(index, oldIndex, desc->newIndex))
+                    return true;
+
+                return oldIndex == desc->newIndex;
             }
 
             [[nodiscard]] op_description* rollbackTask(op_description*& desc)
@@ -640,13 +644,13 @@ namespace mtbase
                 descAllocator.delete_object(oldDesc);
             }
 
-            void registerDesc(
+            void renewRegistered(
                 op_description* const oldDesc,
                 op_description*& desc)
             {
                 op_description* curDesc = oldDesc;
                 op_description* const newDesc = desc;
-                if (registered.compare_exchange_strong(curDesc, newDesc))
+                if (tryRegister(curDesc, newDesc))
                 {
                     destroyDesc(oldDesc);
 
@@ -659,6 +663,20 @@ namespace mtbase
 
                     desc = curDesc;
                 }
+            }
+
+            bool tryRegister(
+                op_description*& expected,
+                op_description* const desired) noexcept
+            {
+                return tryEfficientCAS(registered, expected, desired);
+            }
+
+            template<class T>
+            bool tryEfficientCAS(std::atomic<T*>& target, T*& expected, T* const desired) noexcept
+            {
+                return target.compare_exchange_strong(expected, desired,
+                    std::memory_order_acq_rel, std::memory_order_acquire)
             }
 
             void destroyDesc(op_description* const desc)
