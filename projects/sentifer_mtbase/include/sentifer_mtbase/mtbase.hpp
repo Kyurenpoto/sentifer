@@ -389,8 +389,7 @@ namespace mtbase
                         .op = op,
                         .target = target,
                         .oldTask = oldTask,
-                        .newTask = newTask,
-                        .newIndex = newIndex
+                        .newTask = newTask
                     };
                 }
 
@@ -426,12 +425,13 @@ namespace mtbase
 
                 if (!tryCommitIndex(desc))
                 {
-                    rollbackTask(desc);
+                    op_description* oldDesc = rollbackTask(desc);
+                    destroyExpiredReserve(oldDesc, desc);
 
                     return false;
                 }
                 
-                destroyExpired(desc);
+                destroyExpiredComplete(desc);
 
                 return true;
             }
@@ -447,64 +447,94 @@ namespace mtbase
                     if (oldDesc == nullptr)
                         continue;
 
-                    if (oldDesc->phase != op_description::PHASE::COMPLETE)
-                        help_registered(oldDesc);
+                    help_registered(oldDesc);
                 }
 
                 help_registered(desc);
             }
 
-            void help_registered(op_description* const desc) noexcept
+            void help_registered(op_description*& desc) noexcept
             {
-                op_description* oldDesc = desc;
                 while (true)
                 {
-                    if (!tryCommitTask(oldDesc))
+                    if (desc->phase == op_description::PHASE::COMPLETE)
+                        return;
+
+                    if (!tryCommitTask(desc))
                         continue;
 
-                    if (tryCommitIndex(oldDesc))
+                    if (tryCommitIndex(desc))
                         break;
 
-                    rollbackTask(oldDesc);
+                    op_description* oldDesc = rollbackTask(desc);
+                    op_description* newDesc = registerDesc(oldDesc, desc);
+                    std::swap(desc, newDesc);
+                    destroyExpiredReserve(oldDesc, desc);
+                    destroyExpiredReserve(newDesc, desc);
                 }
 
-                destroyExpired(oldDesc);
+                destroyExpiredComplete(desc);
             }
 
-            bool tryCommitTask(op_description* const desc)
+            bool tryCommitTask(op_description* const desc) noexcept
             {
                 task_t* oldTask = desc->oldTask;
 
                 return desc->target.compare_exchange_strong(oldTask, desc->newTask);
             }
 
-            bool tryCommitIndex(op_description* const desc)
+            bool tryCommitIndex(op_description* const desc) noexcept
             {
                 index_t* oldIndex = desc->oldIndex;
 
                 return index.compare_exchange_strong(oldIndex, desc->newIndex);
             }
 
-            void rollbackTask(op_description*& desc)
+            [[nodiscard]] op_description* rollbackTask(op_description*& desc)
             {
                 desc->target.store(desc->oldTask);
 
                 op_description* oldDesc = desc;
-                indexAllocator.delete_object(oldDesc->newIndex);
-
                 index_t* const oldIndex = index.load();
-                if (oldDesc->oldIndex != oldIndex)
-                    indexAllocator.delete_object(oldDesc->oldIndex);
-
                 index_t* const newIndex =
                     indexAllocator.new_object(oldIndex->move(desc->op));
                 desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
-                descAllocator.delete_object(oldDesc);
+                return oldDesc;
             }
 
-            void destroyExpired(op_description*& desc)
+            [[nodiscard]] op_description* registerDesc(
+                op_description* const prevDesc,
+                op_description*& nextDesc)
+                noexcept
             {
-                op_description* oldDesc = desc;
+                op_description* oldDesc = prevDesc;
+                op_description* const newDesc = nextDesc;
+
+                if (registered.compare_exchange_strong(oldDesc, newDesc))
+                    return newDesc;
+
+                return oldDesc;
+            }
+
+            void destroyExpiredReserve(
+                op_description* const desc,
+                op_description* const curDesc)
+            {
+                if (desc == curDesc)
+                    return;
+
+                if (desc->oldIndex != curDesc->oldIndex)
+                    indexAllocator.delete_object(desc->oldIndex);
+                
+                if (desc->newIndex != curDesc->oldIndex)
+                    indexAllocator.delete_object(desc->newIndex);
+
+                descAllocator.delete_object(desc);
+            }
+
+            void destroyExpiredComplete(op_description*& desc)
+            {
+                op_description* const oldDesc = desc;
                 indexAllocator.delete_object(oldDesc->oldIndex);
 
                 desc = descAllocator.new_object(oldDesc->completed());
