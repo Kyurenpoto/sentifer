@@ -363,6 +363,21 @@ namespace mtbase
                     }
                 }
 
+                size_t getTargetIndex() const noexcept
+                {
+                    switch (op)
+                    {
+                    case OP::PUSH_FRONT:
+                    case OP::PUSH_BACK:
+                        return front;
+                    case OP::POP_FRONT:
+                    case OP::POP_BACK:
+                        return back;
+                    default:
+                        return 0;
+                    }
+                }
+
             public:
                 const size_t front = 0;
                 const size_t back = 1;
@@ -496,13 +511,14 @@ namespace mtbase
                     return nullptr;
 
                 index_t* const newIndex = indexAllocator.new_object(oldIndex->move(op));
+                std::atomic<task_t*>& target = tasks[oldIndex->getTargetIndex(op)];
 
                 op_description* desc = descAllocator.new_object(op_description
                     {
                         .phase = op_description::PHASE::RESERVE,
                         .op = op,
-                        .target = tasks[oldIndex->front],
-                        .oldTask = nullptr,
+                        .target = target,
+                        .oldTask = target.load(),
                         .newTask = task,
                         .oldIndex = oldIndex,
                         .newIndex = newIndex
