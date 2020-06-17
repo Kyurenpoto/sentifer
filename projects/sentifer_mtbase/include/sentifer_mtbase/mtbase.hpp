@@ -455,6 +455,12 @@ namespace mtbase
 
             void help_registered(op_description*& desc) noexcept
             {
+                help_registered_progress(desc);
+                help_registered_complete(desc);
+            }
+
+            void help_registered_progress(op_description*& desc) noexcept
+            {
                 while (true)
                 {
                     if (desc->phase == op_description::PHASE::COMPLETE)
@@ -467,27 +473,34 @@ namespace mtbase
                         break;
 
                     op_description* oldDesc = rollbackTask(desc);
-                    op_description* newDesc = registerDesc(oldDesc, desc);
-                    std::swap(desc, newDesc);
-                    destroyExpiredReserve(oldDesc, desc);
-                    destroyExpiredReserve(newDesc, desc);
+                    registerDesc(oldDesc, desc);
                 }
+            }
 
-                destroyExpiredComplete(desc);
+            void help_registered_complete(op_description*& desc) noexcept
+            {
+                while (desc->phase != op_description::PHASE::COMPLETE)
+                {
+                    op_description* oldDesc = desc;
+                    desc = descAllocator.new_object(desc->completed());
+                    registerDesc(oldDesc, desc);
+                }
             }
 
             bool tryCommitTask(op_description* const desc) noexcept
             {
                 task_t* oldTask = desc->oldTask;
 
-                return desc->target.compare_exchange_strong(oldTask, desc->newTask);
+                return desc->target.compare_exchange_strong(oldTask, desc->newTask) ||
+                    oldTask == desc->newTask;
             }
 
             bool tryCommitIndex(op_description* const desc) noexcept
             {
                 index_t* oldIndex = desc->oldIndex;
 
-                return index.compare_exchange_strong(oldIndex, desc->newIndex);
+                return index.compare_exchange_strong(oldIndex, desc->newIndex) ||
+                    oldIndex == desc->newIndex;
             }
 
             [[nodiscard]] op_description* rollbackTask(op_description*& desc)
@@ -499,20 +512,6 @@ namespace mtbase
                 index_t* const newIndex =
                     indexAllocator.new_object(oldIndex->move(desc->op));
                 desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
-                return oldDesc;
-            }
-
-            [[nodiscard]] op_description* registerDesc(
-                op_description* const prevDesc,
-                op_description*& nextDesc)
-                noexcept
-            {
-                op_description* oldDesc = prevDesc;
-                op_description* const newDesc = nextDesc;
-
-                if (registered.compare_exchange_strong(oldDesc, newDesc))
-                    return newDesc;
-
                 return oldDesc;
             }
 
@@ -539,6 +538,30 @@ namespace mtbase
 
                 desc = descAllocator.new_object(oldDesc->completed());
                 descAllocator.delete_object(oldDesc);
+            }
+
+            void registerDesc(
+                op_description* const oldDesc,
+                op_description*& desc)
+            {
+                op_description* newDesc = tryRegisterDesc(oldDesc, desc);
+                std::swap(desc, newDesc);
+                destroyExpiredReserve(oldDesc, desc);
+                destroyExpiredReserve(newDesc, desc);
+            }
+
+            [[nodiscard]] op_description* tryRegisterDesc(
+                op_description* const prevDesc,
+                op_description*& nextDesc)
+                noexcept
+            {
+                op_description* oldDesc = prevDesc;
+                op_description* const newDesc = nextDesc;
+
+                if (registered.compare_exchange_strong(oldDesc, newDesc))
+                    return newDesc;
+
+                return oldDesc;
             }
 
         private:
