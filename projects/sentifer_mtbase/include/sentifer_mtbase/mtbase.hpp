@@ -345,9 +345,22 @@ namespace mtbase
                     return (back + REAL_SIZE - front) % REAL_SIZE == 1;
                 }
 
-                bool isValid() const noexcept
+                bool isValid(OP op) const noexcept
                 {
-                    return front != back;
+                    if (front == back)
+                        return false;
+
+                    switch (op)
+                    {
+                    case OP::PUSH_FRONT:
+                    case OP::PUSH_BACK:
+                        return isFull();
+                    case OP::POP_FRONT:
+                    case OP::POP_BACK:
+                        return isEmpty();
+                    default:
+                        return true;
+                    }
                 }
 
             public:
@@ -361,7 +374,8 @@ namespace mtbase
                     size_t
                 {
                     RESERVE,
-                    COMPLETE
+                    COMPLETE,
+                    FAIL
                 };
 
             public:
@@ -381,7 +395,7 @@ namespace mtbase
                     };
                 }
 
-                op_description completed() const noexcept
+                op_description completed(index_t* const oldIndexLoad) const noexcept
                 {
                     return op_description
                     {
@@ -389,7 +403,21 @@ namespace mtbase
                         .op = op,
                         .target = target,
                         .oldTask = oldTask,
-                        .newTask = newTask
+                        .newTask = newTask,
+                        .oldIndex = oldIndexLoad
+                    };
+                }
+
+                op_description failed(index_t* const oldIndexLoad) const noexcept
+                {
+                    return op_description
+                    {
+                        .phase = op_description::PHASE::FAIL,
+                        .op = op,
+                        .target = target,
+                        .oldTask = oldTask,
+                        .newTask = newTask,
+                        .oldIndex = oldIndexLoad
                     };
                 }
 
@@ -418,7 +446,44 @@ namespace mtbase
             }
 
         private:
-            bool fast_path(op_description*& desc) noexcept
+            op_description* createDesc(task_t* task, OP op)
+            {
+                index_t* const oldIndex = index.load();
+                if (!oldIndex->isValid(op))
+                    return nullptr;
+
+                index_t* const newIndex = indexAllocator.new_object(oldIndex->move(op));
+
+                op_description* desc = descAllocator.new_object(op_description
+                    {
+                        .phase = op_description::PHASE::RESERVE,
+                        .op = op,
+                        .target = tasks[oldIndex->front],
+                        .oldTask = nullptr,
+                        .newTask = task,
+                        .oldIndex = oldIndex,
+                        .newIndex = newIndex
+                    });
+
+                applyDesc(desc);
+
+                return desc;
+            }
+
+            void applyDesc(op_description*& desc)
+            {
+                op_description* helpDesc = registered.load();
+                if (helpDesc != nullptr)
+                    help_registered(helpDesc);
+
+                for (size_t i = 0; i < MAX_RETRY; ++i)
+                    if (fast_path(desc))
+                        return;
+
+                slow_path(desc);
+            }
+
+            bool fast_path(op_description*& desc)
             {
                 if (!tryCommitTask(desc))
                     return false;
@@ -436,7 +501,7 @@ namespace mtbase
                 return true;
             }
 
-            void slow_path(op_description*& desc) noexcept
+            void slow_path(op_description*& desc)
             {
                 op_description* oldDesc = nullptr;
                 while (true)
@@ -453,7 +518,7 @@ namespace mtbase
                 help_registered(desc);
             }
 
-            void help_registered(op_description*& desc) noexcept
+            void help_registered(op_description*& desc)
             {
                 help_registered_progress(desc);
                 help_registered_complete(desc);
@@ -463,7 +528,7 @@ namespace mtbase
             {
                 while (true)
                 {
-                    if (desc->phase == op_description::PHASE::COMPLETE)
+                    if (desc->phase != op_description::PHASE::RESERVE)
                         return;
 
                     if (!tryCommitTask(desc))
@@ -479,10 +544,13 @@ namespace mtbase
 
             void help_registered_complete(op_description*& desc) noexcept
             {
+                if (desc->phase == op_description::PHASE::FAIL)
+                    return;
+
                 while (desc->phase != op_description::PHASE::COMPLETE)
                 {
                     op_description* oldDesc = desc;
-                    desc = descAllocator.new_object(desc->completed());
+                    desc = descAllocator.new_object(desc->completed(index.load()));
                     registerDesc(oldDesc, desc);
                 }
             }
@@ -509,9 +577,14 @@ namespace mtbase
 
                 op_description* oldDesc = desc;
                 index_t* const oldIndex = index.load();
-                index_t* const newIndex =
-                    indexAllocator.new_object(oldIndex->move(desc->op));
-                desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
+                if (oldIndex->isValid(oldDesc->op))
+                {
+                    index_t* const newIndex =
+                        indexAllocator.new_object(oldIndex->move(desc->op));
+                    desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
+                }
+                else
+                    desc = descAllocator.new_object(oldDesc->failed(oldIndex));
                 return oldDesc;
             }
 
@@ -536,7 +609,7 @@ namespace mtbase
                 op_description* const oldDesc = desc;
                 indexAllocator.delete_object(oldDesc->oldIndex);
 
-                desc = descAllocator.new_object(oldDesc->completed());
+                desc = descAllocator.new_object(oldDesc->completed(index.load()));
                 descAllocator.delete_object(oldDesc);
             }
 
@@ -566,6 +639,7 @@ namespace mtbase
 
         private:
             static constexpr size_t REAL_SIZE = SIZE + 2;
+            static constexpr size_t MAX_RETRY = 3;
             mi_allocator<index_t> indexAllocator;
             mi_allocator<op_description> descAllocator;
             std::atomic<index_t*> index;
