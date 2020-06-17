@@ -259,13 +259,13 @@ namespace mtbase
 
     inline namespace schedulers
     {
-        struct alignas(BASE_ALIGN) task_t
+        struct task_t
         {
 
         };
 
         template<size_t SIZE>
-        struct task_scheduler final
+        struct task_wait_free_deque final
         {
             static_assert(SIZE >= BASE_ALIGN * 8);
             static_assert(SIZE <= 0xFFFF'FFFD);
@@ -432,7 +432,7 @@ namespace mtbase
             };
 
         public:
-            task_scheduler(mi_memory_resource* res) :
+            task_wait_free_deque(mi_memory_resource* res) :
                 indexAllocator{ res },
                 descAllocator{ res }
             {
@@ -440,7 +440,7 @@ namespace mtbase
                 index.store(init);
             }
 
-            ~task_scheduler()
+            ~task_wait_free_deque()
             {
                 indexAllocator.delete_object(index.load());
                 descAllocator.delete_object(registered.load());
@@ -705,6 +705,6 @@ namespace mtbase
         };
 
         mi_memory_resource r;
-        task_scheduler<(1 << 10)> temp{ &r };
+        task_wait_free_deque<(1 << 10)> temp{ &r };
     }
 }
