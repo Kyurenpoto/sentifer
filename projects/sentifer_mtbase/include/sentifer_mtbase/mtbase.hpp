@@ -699,6 +699,11 @@ namespace mtbase
 
             void destroyDesc(op_description* const desc)
             {
+                op_description* oldDesc = desc;
+                while (!tryRegister(oldDesc, nullptr))
+                    if (oldDesc == desc)
+                        break;
+
                 index_t* const curIndex = index.load(std::memory_order_acquire);
                 if (desc->oldIndex == curIndex)
                     indexAllocator.delete_object(desc->oldIndex);
