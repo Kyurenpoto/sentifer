@@ -649,6 +649,9 @@ namespace mtbase
 
             void destroyExpiredComplete(op_description*& desc)
             {
+                if (desc->phase == op_description::PHASE::FAIL)
+                    return;
+
                 op_description* const oldDesc = desc;
                 indexAllocator.delete_object(oldDesc->oldIndex);
 
