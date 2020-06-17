@@ -452,13 +452,13 @@ namespace mtbase
                 descAllocator{ res }
             {
                 index_t* init = indexAllocator.new_object();
-                index.store(init);
+                index.store(init, std::memory_order_relaxed);
             }
 
             ~task_wait_free_deque()
             {
-                indexAllocator.delete_object(index.load());
-                descAllocator.delete_object(registered.load());
+                indexAllocator.delete_object(index.load(std::memory_order_relaxed));
+                descAllocator.delete_object(registered.load(std::memory_order_relaxed));
             }
 
             bool push_front(task_t* task)
@@ -506,7 +506,7 @@ namespace mtbase
         private:
             op_description* createDesc(task_t* task, OP op)
             {
-                index_t* const oldIndex = index.load();
+                index_t* const oldIndex = index.load(std::memory_order_acquire);
                 if (!oldIndex->isValid(op))
                     return nullptr;
 
@@ -518,7 +518,7 @@ namespace mtbase
                         .phase = op_description::PHASE::RESERVE,
                         .op = op,
                         .target = target,
-                        .oldTask = target.load(),
+                        .oldTask = target.load(std::memory_order_acquire),
                         .newTask = task,
                         .oldIndex = oldIndex,
                         .newIndex = newIndex
@@ -531,7 +531,7 @@ namespace mtbase
 
             void applyDesc(op_description*& desc)
             {
-                op_description* helpDesc = registered.load();
+                op_description* helpDesc = registered.load(std::memory_order_acquire);
                 if (helpDesc != nullptr)
                     help_registered(helpDesc);
 
@@ -609,7 +609,8 @@ namespace mtbase
                 while (desc->phase != op_description::PHASE::COMPLETE)
                 {
                     op_description* oldDesc = desc;
-                    desc = descAllocator.new_object(oldDesc->completed(index.load()));
+                    desc = descAllocator.new_object(
+                        oldDesc->completed(index.load(std::memory_order_acquire)));
                     renewRegistered(oldDesc, desc);
                 }
             }
@@ -636,10 +637,10 @@ namespace mtbase
 
             [[nodiscard]] op_description* rollbackTask(op_description*& desc)
             {
-                desc->target.store(desc->oldTask);
+                desc->target.store(desc->oldTask, std::memory_order_release);
 
                 op_description* oldDesc = desc;
-                index_t* const oldIndex = index.load();
+                index_t* const oldIndex = index.load(std::memory_order_acquire);
                 if (oldIndex->isValid(oldDesc->op))
                 {
                     index_t* const newIndex =
@@ -656,7 +657,8 @@ namespace mtbase
                 op_description* const oldDesc = desc;
                 indexAllocator.delete_object(oldDesc->oldIndex);
 
-                desc = descAllocator.new_object(oldDesc->completed(index.load()));
+                desc = descAllocator.new_object(
+                    oldDesc->completed(index.load(std::memory_order_acquire)));
                 descAllocator.delete_object(oldDesc);
             }
 
@@ -697,7 +699,7 @@ namespace mtbase
 
             void destroyDesc(op_description* const desc)
             {
-                index_t* const curIndex = index.load();
+                index_t* const curIndex = index.load(std::memory_order_acquire);
                 if (desc->oldIndex == curIndex)
                     indexAllocator.delete_object(desc->oldIndex);
                 if (desc->newIndex == curIndex)
