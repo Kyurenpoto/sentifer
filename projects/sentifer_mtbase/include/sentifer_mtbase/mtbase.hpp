@@ -451,7 +451,7 @@ namespace mtbase
                 op_description* const desc = createDesc(task, OP::PUSH_FRONT);
 
                 bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                destoryDesc(desc);
+                destroyDesc(desc);
 
                 return result;
             }
@@ -461,7 +461,7 @@ namespace mtbase
                 op_description* const desc = createDesc(task, OP::PUSH_BACK);
 
                 bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                destoryDesc(desc);
+                destroyDesc(desc);
 
                 return result;
             }
@@ -472,7 +472,7 @@ namespace mtbase
 
                 task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
                         desc->oldTask : nullptr);
-                destoryDesc(desc);
+                destroyDesc(desc);
 
                 return result;
             }
@@ -483,7 +483,7 @@ namespace mtbase
 
                 task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
                     desc->oldTask : nullptr);
-                destoryDesc(desc);
+                destroyDesc(desc);
 
                 return result;
             }
@@ -534,12 +534,12 @@ namespace mtbase
                 if (!tryCommitIndex(desc))
                 {
                     op_description* oldDesc = rollbackTask(desc);
-                    destroyExpiredReserve(oldDesc, desc);
+                    destroyDesc(oldDesc);
 
                     return false;
                 }
                 
-                destroyExpiredComplete(desc);
+                completeDesc(desc);
 
                 return true;
             }
@@ -593,7 +593,7 @@ namespace mtbase
                 while (desc->phase != op_description::PHASE::COMPLETE)
                 {
                     op_description* oldDesc = desc;
-                    desc = descAllocator.new_object(desc->completed(index.load()));
+                    desc = descAllocator.new_object(oldDesc->completed(index.load()));
                     registerDesc(oldDesc, desc);
                 }
             }
@@ -623,7 +623,7 @@ namespace mtbase
                 if (oldIndex->isValid(oldDesc->op))
                 {
                     index_t* const newIndex =
-                        indexAllocator.new_object(oldIndex->move(desc->op));
+                        indexAllocator.new_object(oldIndex->move(oldDesc->op));
                     desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
                 }
                 else
@@ -631,27 +631,8 @@ namespace mtbase
                 return oldDesc;
             }
 
-            void destroyExpiredReserve(
-                op_description* const desc,
-                op_description* const curDesc)
+            void completeDesc(op_description*& desc)
             {
-                if (desc == curDesc)
-                    return;
-
-                if (desc->oldIndex != curDesc->oldIndex)
-                    indexAllocator.delete_object(desc->oldIndex);
-                
-                if (desc->newIndex != curDesc->oldIndex)
-                    indexAllocator.delete_object(desc->newIndex);
-
-                descAllocator.delete_object(desc);
-            }
-
-            void destroyExpiredComplete(op_description*& desc)
-            {
-                if (desc->phase == op_description::PHASE::FAIL)
-                    return;
-
                 op_description* const oldDesc = desc;
                 indexAllocator.delete_object(oldDesc->oldIndex);
 
@@ -663,27 +644,24 @@ namespace mtbase
                 op_description* const oldDesc,
                 op_description*& desc)
             {
-                op_description* newDesc = tryRegisterDesc(oldDesc, desc);
-                std::swap(desc, newDesc);
-                destroyExpiredReserve(oldDesc, desc);
-                destroyExpiredReserve(newDesc, desc);
+                op_description* curDesc = oldDesc;
+                op_description* const newDesc = desc;
+                if (registered.compare_exchange_strong(curDesc, newDesc))
+                {
+                    destroyDesc(oldDesc);
+
+                    desc = newDesc;
+                }
+                else
+                {
+                    destroyDesc(oldDesc);
+                    destroyDesc(newDesc);
+
+                    desc = curDesc;
+                }
             }
 
-            [[nodiscard]] op_description* tryRegisterDesc(
-                op_description* const prevDesc,
-                op_description*& nextDesc)
-                noexcept
-            {
-                op_description* oldDesc = prevDesc;
-                op_description* const newDesc = nextDesc;
-
-                if (registered.compare_exchange_strong(oldDesc, newDesc))
-                    return newDesc;
-
-                return oldDesc;
-            }
-
-            void destoryDesc(op_description* const desc)
+            void destroyDesc(op_description* const desc)
             {
                 index_t* const curIndex = index.load();
                 if (desc->oldIndex == curIndex)
