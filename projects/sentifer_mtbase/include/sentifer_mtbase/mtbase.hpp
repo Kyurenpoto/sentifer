@@ -451,7 +451,7 @@ namespace mtbase
                 op_description* const desc = createDesc(task, OP::PUSH_FRONT);
 
                 bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                descAllocator.delete_object(desc);
+                destoryDesc(desc);
 
                 return result;
             }
@@ -461,7 +461,7 @@ namespace mtbase
                 op_description* const desc = createDesc(task, OP::PUSH_BACK);
 
                 bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                descAllocator.delete_object(desc);
+                destoryDesc(desc);
 
                 return result;
             }
@@ -472,7 +472,7 @@ namespace mtbase
 
                 task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
                         desc->oldTask : nullptr);
-                descAllocator.delete_object(desc);
+                destoryDesc(desc);
 
                 return result;
             }
@@ -483,7 +483,7 @@ namespace mtbase
 
                 task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
                     desc->oldTask : nullptr);
-                descAllocator.delete_object(desc);
+                destoryDesc(desc);
 
                 return result;
             }
@@ -681,6 +681,17 @@ namespace mtbase
                     return newDesc;
 
                 return oldDesc;
+            }
+
+            void destoryDesc(op_description* const desc)
+            {
+                index_t* const curIndex = index.load();
+                if (desc->oldIndex == curIndex)
+                    indexAllocator.delete_object(desc->oldIndex);
+                if (desc->newIndex == curIndex)
+                    indexAllocator.delete_object(desc->newIndex);
+
+                descAllocator.delete_object(desc);
             }
 
         private:
