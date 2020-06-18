@@ -363,7 +363,7 @@ namespace mtbase
                     }
                 }
 
-                size_t getTargetIndex() const noexcept
+                size_t getTargetIndex(OP op) const noexcept
                 {
                     switch (op)
                     {
