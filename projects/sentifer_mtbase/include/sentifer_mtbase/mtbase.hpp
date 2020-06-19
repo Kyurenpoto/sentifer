@@ -4,7 +4,7 @@
 #include <chrono>
 #include <atomic>
 #include <array>
-#include <optional>
+#include <tuple>
 
 #include "mimalloc.h"
 
@@ -259,10 +259,7 @@ namespace mtbase
 
     inline namespace schedulers
     {
-        struct task_t
-        {
-
-        };
+        struct task_t;
 
         template<size_t SIZE>
         struct task_wait_free_deque final
@@ -723,7 +720,43 @@ namespace mtbase
             std::array<std::atomic<task_t*>, REAL_SIZE> tasks;
         };
 
-        mi_memory_resource r;
-        task_wait_free_deque<(1 << 10)> temp{ &r };
+        struct task_t
+        {
+            virtual void invoke() = 0;
+        };
+
+        template<class T, class Func, class TupleArgs>
+        struct task_impl_t :
+            task_t
+        {
+            task_impl_t(T* const fromObj, Func method, TupleArgs args) :
+                onwer{ fromObj },
+                invoked{ method },
+                tupled{ args }
+            {}
+
+            void invoke() override
+            {
+                std::apply(invoked, std::tuple_cat(std::tuple<T* const>{owner}, tupled));
+            }
+
+        private:
+            T* const owner;
+            Func invoked;
+            TupleArgs tupled;
+        };
+
+        struct object_sheduler
+        {
+            template<class T, class Func, class... Args>
+            void registerTask(T* const fromObj, Func method, Args&&... args)
+            {
+                static_assert(std::is_member_function_pointer_v<Func>);
+                static_assert(std::is_invocable_r_v<void, Func, T*, Args...>);
+            }
+
+        private:
+            task_wait_free_deque<(1 << 20)> taskDeq;
+        };
     }
 }
