@@ -162,7 +162,7 @@ namespace mtbase
             template<class T>
             [[nodiscard]] T* new_object(T && other)
             {
-                T* p = allocate_object();
+                T* p = allocate_object<T>();
 
                 try
                 {
@@ -241,55 +241,37 @@ namespace mtbase
 
     inline namespace clocks
     {
-        template<class Clock>
-        struct clock_base
+        using system_tick = std::chrono::nanoseconds;
+        using steady_tick = std::chrono::nanoseconds;
+
+        struct clock_t
         {
-            clock_base() noexcept
+            static system_tick getSystemTick()
             {
-                startSinceEpoch = baseSinceEpoch = Clock::now().time_since_epoch();
+                return getTick<std::chrono::system_clock>();
             }
 
-            virtual ~clock_base() noexcept
-            {}
-
-            std::chrono::nanoseconds nowFromEpoch() noexcept
+            static steady_tick getSteadyTick()
             {
-                return Clock::now().time_since_epoch();
-            }
-
-            std::chrono::nanoseconds nowFromStart() noexcept
-            {
-                return nowFromEpoch() - startSinceEpoch;
-            }
-
-            std::chrono::nanoseconds nowFromBase() noexcept
-            {
-                return nowFromEpoch() - baseSinceEpoch;
-            }
-
-            void setBase(std::chrono::nanoseconds base) noexcept
-            {
-                baseSinceEpoch = base;
-            }
-
-            void resetBase() noexcept
-            {
-                baseSinceEpoch = startSinceEpoch;
+                return getTick<std::chrono::steady_clock>();
             }
 
         private:
-            std::chrono::nanoseconds startSinceEpoch;
-            std::chrono::nanoseconds baseSinceEpoch;
+            template<class Clock>
+            static std::chrono::nanoseconds getTick()
+            {
+                std::chrono::nanoseconds oldTick = tick.load(std::memory_order_acquire);
+                std::chrono::nanoseconds newTick = Clock::now().time_since_epoch();
+                while (!tick.compare_exchange_strong(oldTick, newTick,
+                    std::memory_order_acq_rel, std::memory_order_acquire))
+                    newTick = Clock::now().time_since_epoch();
+                
+                return newTick;
+            }
+
+        private:
+            static std::atomic<std::chrono::nanoseconds> tick;
         };
-
-        inline namespace instanced
-        {
-            using thread_local_clock = clock_base<std::chrono::steady_clock>;
-            using global_clock = clock_base<std::chrono::system_clock>;
-
-            static thread_local thread_local_clock LocalClock;
-            static global_clock GlobalClock;
-        }
     }
 
     inline namespace schedulers
@@ -778,15 +760,18 @@ namespace mtbase
             task_t
         {
             task_impl_t(T* const fromObj, Func method, TupleArgs args) :
-                onwer{ fromObj },
+                task_t{ sizeof(task_impl_t), alignof(task_impl_t) },
+                owner{ fromObj },
                 invoked{ method },
                 tupled{ args }
-            {}
+            {
+
+            }
 
         public:
             void invoke() override
             {
-                std::apply(invoked, std::tuple_cat(std::tuple<T* const>{owner}, tupled));
+                std::apply(invoked, std::tuple_cat(std::make_tuple(owner), tupled));
             }
 
         private:
@@ -801,17 +786,16 @@ namespace mtbase
                 alloc{ res }
             {}
 
+        public:
             template<class T, class Func, class... Args>
             void registerTask(T* const fromObj, Func method, Args&&... args)
             {
                 static_assert(std::is_member_function_pointer_v<Func>);
                 static_assert(std::is_invocable_r_v<void, Func, T*, Args...>);
 
-                registerTaskImpl(alloc.new_object<task_impl_t>(
-                    fromObj, method, std::forward<Args>(args)...));
+                registerTaskImpl(alloc.new_object(
+                    task_impl_t{ fromObj, method, std::make_tuple(std::forward<Args>(args)...) }));
             }
-
-            virtual void flush() = 0;
 
         protected:
             void destroyTask(task_t* const task)
@@ -829,7 +813,15 @@ namespace mtbase
             generic_allocator alloc;
         };
 
-        struct thread_local_scheduler;
+        struct thread_local_scheduler final :
+            public scheduler
+        {
+        protected:
+            void registerTaskImpl(task_t* const task) override
+            {
+
+            }
+        };
 
         struct object_sheduler final :
             public scheduler
@@ -918,12 +910,6 @@ namespace mtbase
             const std::chrono::nanoseconds MAX_FLUSH_TICK;
             const size_t MAX_FLUSH_COUNT;
             const size_t MAX_FLUSH_COUNT_AT_ONCE;
-        };
-
-        struct thread_local_scheduler final :
-            public scheduler
-        {
-
         };
     }
 }
