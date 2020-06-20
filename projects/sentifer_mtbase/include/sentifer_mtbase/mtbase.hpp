@@ -260,17 +260,29 @@ namespace mtbase
             template<class Clock>
             static std::chrono::nanoseconds getTick()
             {
-                std::chrono::nanoseconds oldTick = tick.load(std::memory_order_acquire);
-                std::chrono::nanoseconds newTick = Clock::now().time_since_epoch();
-                while (!tick.compare_exchange_strong(oldTick, newTick,
-                    std::memory_order_acq_rel, std::memory_order_acquire))
-                    newTick = Clock::now().time_since_epoch();
+                while (!tryOwn());
+             
+                std::chrono::nanoseconds tick = Clock::now().time_since_epoch();
                 
-                return newTick;
+                release();
+                
+                return tick;
+            }
+
+            static bool tryOwn()
+            {
+                bool oldIsOwned = false;
+                return isOwned.compare_exchange_strong(oldIsOwned, true,
+                    std::memory_order_acq_rel, std::memory_order_acquire);
+            }
+
+            static void release()
+            {
+                isOwned.store(false, std::memory_order_release);
             }
 
         private:
-            static std::atomic<std::chrono::nanoseconds> tick;
+            inline static std::atomic_bool isOwned{ false };
         };
     }
 
@@ -904,7 +916,7 @@ namespace mtbase
 
         private:
             task_wait_free_deque<(1 << 20)> taskDeq;
-            std::atomic_bool isOwned = false;
+            std::atomic_bool isOwned{ false };
             size_t cntFlushed;
             std::chrono::nanoseconds tickBeginFlush;
             const std::chrono::nanoseconds MAX_FLUSH_TICK;
