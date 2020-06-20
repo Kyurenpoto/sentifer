@@ -89,72 +89,78 @@ namespace mtbase
             mi_heap_t* heap;
         };
 
-        template<class T>
-        struct mi_allocator
+        struct generic_allocator
         {
-            using value_type = T;
+            generic_allocator(const generic_allocator&) noexcept = default;
 
-        public:
-            mi_allocator(const mi_allocator&) noexcept = default;
-
-            template<class U>
-            mi_allocator(const mi_allocator<U>& other) noexcept :
-                res{ other.res }
-            {}
-
-            mi_allocator(mi_memory_resource* r) :
+            generic_allocator(std::pmr::memory_resource * r) :
                 res{ r }
             {}
 
         public:
+            [[nodiscard]] void* allocate_bytes(size_t nbytes, size_t alignment = alignof(std::max_align_t))
+            {
+                return res->allocate(nbytes, alignment);
+            }
+
+            void deallocate_bytes(void* p, size_t nbytes, size_t alignment = alignof(std::max_align_t))
+            {
+                res->deallocate(p, nbytes, alignment);
+            }
+
+            template<class T>
             [[nodiscard]] T* allocate_object(size_t n = 1)
             {
                 if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
                     throw std::bad_array_new_length{};
 
-                return static_cast<T*>(res->allocate(n * sizeof(T), alignof(T)));
+                return static_cast<T*>(allocate_bytes(n * sizeof(T), alignof(T)));
             }
 
-            void deallocate_object(T* p, size_t n = 1)
+            template<class T>
+            void deallocate_object(T * p, size_t n = 1)
             {
-                res->deallocate(p, n * sizeof(T), alignof(T));
+                deallocate_bytes(p, n * sizeof(T), alignof(T));
             }
 
-            template<class... Args>
-            void construct(T* p, Args&&... args)
+            template<class T, class... Args>
+            void construct(T * p, Args &&... args)
             {
                 new(p) T{ std::forward<Args>(args)... };
             }
 
-            void construct(T* p, T&& other)
+            template<class T>
+            void construct(T * p, T && other)
             {
                 new(p) T{ other };
             }
 
-            void destroy(T* p)
+            template<class T>
+            void destroy(T * p)
             {
                 p->~T();
             }
 
-            template<class... Args>
-            [[nodiscard]] T* new_object(Args&&... args)
+            template<class T, class... Args>
+            [[nodiscard]] T* new_object(Args &&... args)
             {
-                T* p = allocate_object();
-                
+                T* p = allocate_object<T>();
+
                 try
                 {
-                    construct(p, std::forward<Args>(ctor_args)...);
+                    construct(p, std::forward<Args>(args)...);
                 }
                 catch (...)
                 {
                     deallocate_object(p);
                     throw;
                 }
-                
+
                 return p;
             }
 
-            [[nodiscard]] T* new_object(T&& other)
+            template<class T>
+            [[nodiscard]] T* new_object(T && other)
             {
                 T* p = allocate_object();
 
@@ -171,19 +177,48 @@ namespace mtbase
                 return p;
             }
 
-            void delete_object(T* p)
+            template<class T>
+            void delete_object(T * p)
             {
                 destroy(p);
                 deallocate_object(p);
             }
 
-            mi_memory_resource* resource() const
+            std::pmr::memory_resource* resource() const
             {
                 return res;
             }
 
         private:
-            mi_memory_resource* res;
+            std::pmr::memory_resource* res;
+        };
+
+        template<class T>
+        struct mi_allocator
+        {
+            mi_allocator(mi_memory_resource* r) :
+                genAlloc{ r }
+            {}
+
+        public:
+            template<class... Args>
+            [[nodiscard]] T* new_object(Args&&... args)
+            {
+                return genAlloc.new_object<T>(std::forward<Args>(args)...);
+            }
+
+            [[nodiscard]] T* new_object(T&& other)
+            {
+                return genAlloc.new_object<T>(other);
+            }
+
+            void delete_object(T* p)
+            {
+                genAlloc.delete_object(p);
+            }
+
+        private:
+            generic_allocator genAlloc;
         };
 
         struct thread_local_heap :
@@ -691,7 +726,7 @@ namespace mtbase
             bool tryEfficientCAS(std::atomic<T*>& target, T*& expected, T* const desired) noexcept
             {
                 return target.compare_exchange_strong(expected, desired,
-                    std::memory_order_acq_rel, std::memory_order_acquire)
+                    std::memory_order_acq_rel, std::memory_order_acquire);
             }
 
             void destroyDesc(op_description* const desc)
@@ -722,7 +757,20 @@ namespace mtbase
 
         struct task_t
         {
+            task_t(const size_t sizeImpl, const size_t alignImpl) :
+                size{ sizeImpl },
+                align{ alignImpl }
+            {}
+
+            virtual ~task_t()
+            {}
+
+        public:
             virtual void invoke() = 0;
+
+        public:
+            const size_t size;
+            const size_t align;
         };
 
         template<class T, class Func, class TupleArgs>
@@ -735,6 +783,7 @@ namespace mtbase
                 tupled{ args }
             {}
 
+        public:
             void invoke() override
             {
                 std::apply(invoked, std::tuple_cat(std::tuple<T* const>{owner}, tupled));
@@ -746,17 +795,135 @@ namespace mtbase
             TupleArgs tupled;
         };
 
-        struct object_sheduler
+        struct scheduler
         {
+            scheduler(std::pmr::memory_resource* const res) :
+                alloc{ res }
+            {}
+
             template<class T, class Func, class... Args>
             void registerTask(T* const fromObj, Func method, Args&&... args)
             {
                 static_assert(std::is_member_function_pointer_v<Func>);
                 static_assert(std::is_invocable_r_v<void, Func, T*, Args...>);
+
+                registerTaskImpl(alloc.new_object<task_impl_t>(
+                    fromObj, method, std::forward<Args>(args)...));
+            }
+
+            virtual void flush() = 0;
+
+        protected:
+            void destroyTask(task_t* const task)
+            {
+                const size_t size = task->size;
+                const size_t align = task->align;
+
+                alloc.destroy(task);
+                alloc.deallocate_bytes(task, size, align);
+            }
+
+            virtual void registerTaskImpl(task_t* const) = 0;
+
+        private:
+            generic_allocator alloc;
+        };
+
+        struct thread_local_scheduler;
+
+        struct object_sheduler final :
+            public scheduler
+        {
+        public:
+            void flush(thread_local_scheduler& threadSched)
+            {
+                if (!tryOwn())
+                    return;
+
+                // set tickBeginFlush
+                cntFlushed = 0;
+                flushOwned(threadSched);
+            }
+
+        protected:
+            void registerTaskImpl(task_t* const task) override
+            {
+                taskDeq.push_back(task);
+            }
+
+        private:
+            void flushOwned(thread_local_scheduler& threadSched)
+            {
+                flushTasks();
+
+                if (checkTransitionCount() || checkTransitionTick())
+                {
+                    release();
+                    return;
+                }
+
+                threadSched.registerTask(this, &object_sheduler::flushOwned, threadSched);
+            }
+
+            bool tryOwn()
+            {
+                bool oldIsOwned = false;
+                return isOwned.compare_exchange_strong(oldIsOwned, true,
+                    std::memory_order_acq_rel, std::memory_order_acquire);
+            }
+
+            void flushTasks()
+            {
+                for (size_t i = 0; i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
+                {
+                    task_t* const task = taskDeq.pop_front();
+                    if (task == nullptr)
+                    {
+                        cntFlushed = MAX_FLUSH_COUNT;
+                        break;
+                    }
+
+                    task->invoke();
+                    destroyTask(task);
+                    ++cntFlushed;
+                }
+            }
+
+            bool checkTransitionTick()
+            {
+                if (MAX_FLUSH_TICK == std::chrono::nanoseconds{ 0 })
+                    return false;
+
+                // get current tick
+                std::chrono::nanoseconds tickTransition;
+
+                return tickTransition - tickBeginFlush > MAX_FLUSH_TICK;
+            }
+
+            bool checkTransitionCount()
+            {
+                return cntFlushed >= MAX_FLUSH_COUNT;
+            }
+
+            void release()
+            {
+                isOwned.store(false, std::memory_order_release);
             }
 
         private:
             task_wait_free_deque<(1 << 20)> taskDeq;
+            std::atomic_bool isOwned = false;
+            size_t cntFlushed;
+            std::chrono::nanoseconds tickBeginFlush;
+            const std::chrono::nanoseconds MAX_FLUSH_TICK;
+            const size_t MAX_FLUSH_COUNT;
+            const size_t MAX_FLUSH_COUNT_AT_ONCE;
+        };
+
+        struct thread_local_scheduler final :
+            public scheduler
+        {
+
         };
     }
 }
