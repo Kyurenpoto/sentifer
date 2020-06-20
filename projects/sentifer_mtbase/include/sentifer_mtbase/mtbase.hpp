@@ -20,40 +20,52 @@ namespace mtbase
 
     static_assert(BASE_ALIGN == 8, "mtbase is only available on x64");
 
-    namespace tls_variables
+    namespace type_utils
     {
-        static int createThreadId()
+        template<class Ret, class... Args>
+        Ret result_of(Ret(*)(Args...));
+
+        template<class Func>
+        using result_of_t = decltype(result_of(std::declval<Func>()));
+
+        template<class Ret, class Func, class TupleArgs, class IndexSeq>
+        struct is_tuple_invocable_r_impl
+        {};
+
+        template<class Ret, class Func, class TupleArgs, size_t... Index>
+        struct is_tuple_invocable_r_impl<Ret, Func, TupleArgs,
+            std::index_sequence<Index...>>
         {
-            static std::atomic_int threadIdCounter = -1;
-            int oldThreadIdCounter, newThreadIdCounter;
-
-            while (true)
-            {
-                oldThreadIdCounter = threadIdCounter.load();
-                newThreadIdCounter = oldThreadIdCounter + 1;
-
-                if (newThreadIdCounter >= MTBASE_MAX_THREAD)
-                    return -1;
-
-                if (threadIdCounter.compare_exchange_strong(oldThreadIdCounter, newThreadIdCounter))
-                    break;
-            }
-
-            return newThreadIdCounter;
-        }
-
-        struct tls_variables
-        {
-            tls_variables() :
-                threadId{ createThreadId() }
-            {
-
-            }
-
-            int threadId;
+            static constexpr bool value =
+                std::is_invocable_r_v<Ret, Func,
+                std::tuple_element_t<Index, TupleArgs>...>;
         };
 
-        thread_local tls_variables tls;
+        template<class Ret, class Func, class TupleArgs>
+        struct is_tuple_invocable_r
+        {
+            static constexpr bool value =
+                is_tuple_invocable_r_impl<Ret, Func, TupleArgs,
+                std::make_index_sequence<std::tuple_size_v<
+                std::remove_reference_t<TupleArgs>>>>::value;
+        };
+
+        template<class Ret, class Func, class TupleArgs>
+        inline constexpr bool is_tuple_invocable_r_v =
+            is_tuple_invocable_r<Ret, Func, TupleArgs>::value;
+
+        template<class Type, class Tuple>
+        struct tuple_extend_front
+        {};
+
+        template<class Type, class... Types>
+        struct tuple_extend_front<Type, std::tuple<Types...>>
+        {
+            using type = std::tuple<Type, Types...>;
+        };
+
+        template<class Type, class Tuple>
+        using tuple_extend_front_t = typename tuple_extend_front<Type, Tuple>::type;
     }
 
     inline namespace memory_managers
@@ -246,19 +258,19 @@ namespace mtbase
 
         struct clock_t
         {
-            static system_tick getSystemTick()
+            static system_tick getSystemTick() noexcept
             {
                 return getTick<std::chrono::system_clock>();
             }
 
-            static steady_tick getSteadyTick()
+            static steady_tick getSteadyTick() noexcept
             {
                 return getTick<std::chrono::steady_clock>();
             }
 
         private:
             template<class Clock>
-            static std::chrono::nanoseconds getTick()
+            static std::chrono::nanoseconds getTick() noexcept
             {
                 while (!tryOwn());
              
@@ -269,14 +281,14 @@ namespace mtbase
                 return tick;
             }
 
-            static bool tryOwn()
+            static bool tryOwn() noexcept
             {
                 bool oldIsOwned = false;
                 return isOwned.compare_exchange_strong(oldIsOwned, true,
                     std::memory_order_acq_rel, std::memory_order_acquire);
             }
 
-            static void release()
+            static void release() noexcept
             {
                 isOwned.store(false, std::memory_order_release);
             }
@@ -288,509 +300,522 @@ namespace mtbase
 
     inline namespace schedulers
     {
-        struct task_t;
-
-        template<size_t SIZE>
-        struct task_wait_free_deque final
+        inline namespace base_structures
         {
-            static_assert(SIZE >= BASE_ALIGN * 8);
-            static_assert(SIZE <= 0xFFFF'FFFD);
+            struct task_t;
 
-        private:
-            enum class OP :
-                size_t
+            template<size_t SIZE>
+            struct task_wait_free_deque final
             {
-                PUSH_FRONT,
-                PUSH_BACK,
-                POP_FRONT,
-                POP_BACK
-            };
+                static_assert(SIZE >= BASE_ALIGN * 8);
+                static_assert(SIZE <= 0xFFFF'FFFD);
 
-            struct index_t
-            {
-                index_t move(OP op) const noexcept
-                {
-                    switch (op)
-                    {
-                    case OP::PUSH_FRONT:
-                        return pushed_front();
-                    case OP::PUSH_BACK:
-                        return pushed_back();
-                    case OP::POP_FRONT:
-                        return poped_front();
-                    case OP::POP_BACK:
-                        return poped_back();
-                    default:
-                        return index_t{};
-                    }
-                }
-
-                index_t pushed_front() const noexcept
-                {
-                    return index_t
-                    {
-                        .front = (front + REAL_SIZE - 1) % REAL_SIZE,
-                        .back = back
-                    };
-                }
-
-                index_t pushed_back() const noexcept
-                {
-                    return index_t
-                    {
-                        .front = front,
-                        .back = (back + 1) % REAL_SIZE
-                    };
-                }
-
-                index_t poped_front() const noexcept
-                {
-                    return index_t
-                    {
-                        .front = (front + 1) % REAL_SIZE,
-                        .back = back
-                    };
-                }
-
-                index_t poped_back() const noexcept
-                {
-                    return index_t
-                    {
-                        .front = front,
-                        .back = (back + REAL_SIZE - 1) % REAL_SIZE
-                    };
-                }
-
-                bool isFull() const noexcept
-                {
-                    return (front + REAL_SIZE - back) % REAL_SIZE == 1;
-                }
-
-                bool isEmpty() const noexcept
-                {
-                    return (back + REAL_SIZE - front) % REAL_SIZE == 1;
-                }
-
-                bool isValid(OP op) const noexcept
-                {
-                    if (front == back)
-                        return false;
-
-                    switch (op)
-                    {
-                    case OP::PUSH_FRONT:
-                    case OP::PUSH_BACK:
-                        return isFull();
-                    case OP::POP_FRONT:
-                    case OP::POP_BACK:
-                        return isEmpty();
-                    default:
-                        return true;
-                    }
-                }
-
-                size_t getTargetIndex(OP op) const noexcept
-                {
-                    switch (op)
-                    {
-                    case OP::PUSH_FRONT:
-                    case OP::PUSH_BACK:
-                        return front;
-                    case OP::POP_FRONT:
-                    case OP::POP_BACK:
-                        return back;
-                    default:
-                        return 0;
-                    }
-                }
-
-            public:
-                const size_t front = 0;
-                const size_t back = 1;
-            };
-
-            struct op_description
-            {
-                enum class PHASE :
+            private:
+                enum class OP :
                     size_t
                 {
-                    RESERVE,
-                    COMPLETE,
-                    FAIL
+                    PUSH_FRONT,
+                    PUSH_BACK,
+                    POP_FRONT,
+                    POP_BACK
+                };
+
+                struct index_t
+                {
+                    index_t move(OP op) const noexcept
+                    {
+                        switch (op)
+                        {
+                        case OP::PUSH_FRONT:
+                            return pushed_front();
+                        case OP::PUSH_BACK:
+                            return pushed_back();
+                        case OP::POP_FRONT:
+                            return poped_front();
+                        case OP::POP_BACK:
+                            return poped_back();
+                        default:
+                            return index_t{};
+                        }
+                    }
+
+                    index_t pushed_front() const noexcept
+                    {
+                        return index_t
+                        {
+                            .front = (front + REAL_SIZE - 1) % REAL_SIZE,
+                            .back = back
+                        };
+                    }
+
+                    index_t pushed_back() const noexcept
+                    {
+                        return index_t
+                        {
+                            .front = front,
+                            .back = (back + 1) % REAL_SIZE
+                        };
+                    }
+
+                    index_t poped_front() const noexcept
+                    {
+                        return index_t
+                        {
+                            .front = (front + 1) % REAL_SIZE,
+                            .back = back
+                        };
+                    }
+
+                    index_t poped_back() const noexcept
+                    {
+                        return index_t
+                        {
+                            .front = front,
+                            .back = (back + REAL_SIZE - 1) % REAL_SIZE
+                        };
+                    }
+
+                    bool isFull() const noexcept
+                    {
+                        return (front + REAL_SIZE - back) % REAL_SIZE == 1;
+                    }
+
+                    bool isEmpty() const noexcept
+                    {
+                        return (back + REAL_SIZE - front) % REAL_SIZE == 1;
+                    }
+
+                    bool isValid(OP op) const noexcept
+                    {
+                        if (front == back)
+                            return false;
+
+                        switch (op)
+                        {
+                        case OP::PUSH_FRONT:
+                        case OP::PUSH_BACK:
+                            return isFull();
+                        case OP::POP_FRONT:
+                        case OP::POP_BACK:
+                            return isEmpty();
+                        default:
+                            return true;
+                        }
+                    }
+
+                    size_t getTargetIndex(OP op) const noexcept
+                    {
+                        switch (op)
+                        {
+                        case OP::PUSH_FRONT:
+                        case OP::PUSH_BACK:
+                            return front;
+                        case OP::POP_FRONT:
+                        case OP::POP_BACK:
+                            return back;
+                        default:
+                            return 0;
+                        }
+                    }
+
+                public:
+                    const size_t front = 0;
+                    const size_t back = 1;
+                };
+
+                struct op_description
+                {
+                    enum class PHASE :
+                        size_t
+                    {
+                        RESERVE,
+                        COMPLETE,
+                        FAIL
+                    };
+
+                public:
+                    op_description rollbacked(
+                        index_t* const oldIndexLoad,
+                        index_t* const newIndexLoad)
+                        const noexcept
+                    {
+                        return op_description
+                        {
+                            .op = op,
+                            .target = target,
+                            .oldTask = oldTask,
+                            .newTask = newTask,
+                            .oldIndex = oldIndexLoad,
+                            .newIndex = newIndexLoad
+                        };
+                    }
+
+                    op_description completed(index_t* const oldIndexLoad) const noexcept
+                    {
+                        return op_description
+                        {
+                            .phase = op_description::PHASE::COMPLETE,
+                            .op = op,
+                            .target = target,
+                            .oldTask = oldTask,
+                            .newTask = newTask,
+                            .oldIndex = oldIndexLoad
+                        };
+                    }
+
+                    op_description failed(index_t* const oldIndexLoad) const noexcept
+                    {
+                        return op_description
+                        {
+                            .phase = op_description::PHASE::FAIL,
+                            .op = op,
+                            .target = target,
+                            .oldTask = oldTask,
+                            .newTask = newTask,
+                            .oldIndex = oldIndexLoad
+                        };
+                    }
+
+                public:
+                    const PHASE phase{ PHASE::RESERVE };
+                    const OP op{ OP::PUSH_FRONT };
+                    std::atomic<task_t*>& target;
+                    task_t* const oldTask = nullptr;
+                    task_t* const newTask = nullptr;
+                    index_t* const oldIndex = nullptr;
+                    index_t* const newIndex = nullptr;
                 };
 
             public:
-                op_description rollbacked(
-                    index_t* const oldIndexLoad,
-                    index_t* const newIndexLoad)
-                    const noexcept
+                task_wait_free_deque(std::pmr::memory_resource* res) :
+                    indexAllocator{ res },
+                    descAllocator{ res }
                 {
-                    return op_description
-                    {
-                        .op = op,
-                        .target = target,
-                        .oldTask = oldTask,
-                        .newTask = newTask,
-                        .oldIndex = oldIndexLoad,
-                        .newIndex = newIndexLoad
-                    };
+                    index_t* init = indexAllocator.new_object();
+                    index.store(init, std::memory_order_relaxed);
                 }
 
-                op_description completed(index_t* const oldIndexLoad) const noexcept
+                ~task_wait_free_deque()
                 {
-                    return op_description
-                    {
-                        .phase = op_description::PHASE::COMPLETE,
-                        .op = op,
-                        .target = target,
-                        .oldTask = oldTask,
-                        .newTask = newTask,
-                        .oldIndex = oldIndexLoad
-                    };
+                    indexAllocator.delete_object(index.load(std::memory_order_relaxed));
+                    descAllocator.delete_object(registered.load(std::memory_order_relaxed));
                 }
 
-                op_description failed(index_t* const oldIndexLoad) const noexcept
+                bool push_front(task_t* task)
                 {
-                    return op_description
+                    op_description* const desc = createDesc(task, OP::PUSH_FRONT);
+
+                    bool result = (desc->phase == op_description::PHASE::COMPLETE);
+                    destroyDesc(desc);
+
+                    return result;
+                }
+
+                bool push_back(task_t* task)
+                {
+                    op_description* const desc = createDesc(task, OP::PUSH_BACK);
+
+                    bool result = (desc->phase == op_description::PHASE::COMPLETE);
+                    destroyDesc(desc);
+
+                    return result;
+                }
+
+                task_t* pop_front()
+                {
+                    op_description* const desc = createDesc(nullptr, OP::POP_FRONT);
+
+                    task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
+                        desc->oldTask : nullptr);
+                    destroyDesc(desc);
+
+                    return result;
+                }
+
+                task_t* pop_back()
+                {
+                    op_description* const desc = createDesc(nullptr, OP::POP_BACK);
+
+                    task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
+                        desc->oldTask : nullptr);
+                    destroyDesc(desc);
+
+                    return result;
+                }
+
+            private:
+                op_description* createDesc(task_t* task, OP op)
+                {
+                    index_t* const oldIndex = index.load(std::memory_order_acquire);
+                    if (!oldIndex->isValid(op))
+                        return nullptr;
+
+                    index_t* const newIndex = indexAllocator.new_object(oldIndex->move(op));
+                    std::atomic<task_t*>& target = tasks[oldIndex->getTargetIndex(op)];
+
+                    op_description* desc = descAllocator.new_object(op_description
+                        {
+                            .phase = op_description::PHASE::RESERVE,
+                            .op = op,
+                            .target = target,
+                            .oldTask = target.load(std::memory_order_acquire),
+                            .newTask = task,
+                            .oldIndex = oldIndex,
+                            .newIndex = newIndex
+                        });
+
+                    applyDesc(desc);
+
+                    return desc;
+                }
+
+                void applyDesc(op_description*& desc)
+                {
+                    op_description* helpDesc = registered.load(std::memory_order_acquire);
+                    if (helpDesc != nullptr)
+                        help_registered(helpDesc);
+
+                    for (size_t i = 0; i < MAX_RETRY; ++i)
+                        if (fast_path(desc))
+                            return;
+
+                    slow_path(desc);
+                }
+
+                bool fast_path(op_description*& desc)
+                {
+                    if (!tryCommitTask(desc))
+                        return false;
+
+                    if (!tryCommitIndex(desc))
                     {
-                        .phase = op_description::PHASE::FAIL,
-                        .op = op,
-                        .target = target,
-                        .oldTask = oldTask,
-                        .newTask = newTask,
-                        .oldIndex = oldIndexLoad
-                    };
+                        op_description* oldDesc = rollbackTask(desc);
+                        destroyDesc(oldDesc);
+
+                        return false;
+                    }
+
+                    completeDesc(desc);
+
+                    return true;
+                }
+
+                void slow_path(op_description*& desc)
+                {
+                    op_description* oldDesc = nullptr;
+                    while (true)
+                    {
+                        if (tryRegister(oldDesc, desc))
+                            break;
+
+                        if (oldDesc == nullptr)
+                            continue;
+
+                        help_registered(oldDesc);
+                    }
+
+                    help_registered(desc);
+                }
+
+                void help_registered(op_description*& desc)
+                {
+                    help_registered_progress(desc);
+                    help_registered_complete(desc);
+                }
+
+                void help_registered_progress(op_description*& desc) noexcept
+                {
+                    while (true)
+                    {
+                        if (desc->phase != op_description::PHASE::RESERVE)
+                            return;
+
+                        if (!tryCommitTask(desc))
+                            continue;
+
+                        if (tryCommitIndex(desc))
+                            break;
+
+                        op_description* oldDesc = rollbackTask(desc);
+                        renewRegistered(oldDesc, desc);
+                    }
+                }
+
+                void help_registered_complete(op_description*& desc) noexcept
+                {
+                    if (desc->phase == op_description::PHASE::FAIL)
+                        return;
+
+                    while (desc->phase != op_description::PHASE::COMPLETE)
+                    {
+                        op_description* oldDesc = desc;
+                        desc = descAllocator.new_object(
+                            oldDesc->completed(index.load(std::memory_order_acquire)));
+                        renewRegistered(oldDesc, desc);
+                    }
+                }
+
+                bool tryCommitTask(op_description* const desc) noexcept
+                {
+                    task_t* oldTask = desc->oldTask;
+
+                    if (tryEfficientCAS(desc->target, oldTask, desc->newTask))
+                        return true;
+
+                    return oldTask == desc->newTask;
+                }
+
+                bool tryCommitIndex(op_description* const desc) noexcept
+                {
+                    index_t* oldIndex = desc->oldIndex;
+
+                    if (tryEfficientCAS(index, oldIndex, desc->newIndex))
+                        return true;
+
+                    return oldIndex == desc->newIndex;
+                }
+
+                [[nodiscard]] op_description* rollbackTask(op_description*& desc)
+                {
+                    desc->target.store(desc->oldTask, std::memory_order_release);
+
+                    op_description* oldDesc = desc;
+                    index_t* const oldIndex = index.load(std::memory_order_acquire);
+                    if (oldIndex->isValid(oldDesc->op))
+                    {
+                        index_t* const newIndex =
+                            indexAllocator.new_object(oldIndex->move(oldDesc->op));
+                        desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
+                    }
+                    else
+                        desc = descAllocator.new_object(oldDesc->failed(oldIndex));
+                    return oldDesc;
+                }
+
+                void completeDesc(op_description*& desc)
+                {
+                    op_description* const oldDesc = desc;
+                    indexAllocator.delete_object(oldDesc->oldIndex);
+
+                    desc = descAllocator.new_object(
+                        oldDesc->completed(index.load(std::memory_order_acquire)));
+                    descAllocator.delete_object(oldDesc);
+                }
+
+                void renewRegistered(
+                    op_description* const oldDesc,
+                    op_description*& desc)
+                {
+                    op_description* curDesc = oldDesc;
+                    op_description* const newDesc = desc;
+                    if (tryRegister(curDesc, newDesc))
+                    {
+                        destroyDesc(oldDesc);
+
+                        desc = newDesc;
+                    }
+                    else
+                    {
+                        destroyDesc(oldDesc);
+                        destroyDesc(newDesc);
+
+                        desc = curDesc;
+                    }
+                }
+
+                bool tryRegister(
+                    op_description*& expected,
+                    op_description* const desired) noexcept
+                {
+                    return tryEfficientCAS(registered, expected, desired);
+                }
+
+                template<class T>
+                bool tryEfficientCAS(std::atomic<T*>& target, T*& expected, T* const desired) noexcept
+                {
+                    return target.compare_exchange_strong(expected, desired,
+                        std::memory_order_acq_rel, std::memory_order_acquire);
+                }
+
+                void destroyDesc(op_description* const desc)
+                {
+                    op_description* oldDesc = desc;
+                    while (!tryRegister(oldDesc, nullptr))
+                        if (oldDesc == desc)
+                            break;
+
+                    index_t* const curIndex = index.load(std::memory_order_acquire);
+                    if (desc->oldIndex == curIndex)
+                        indexAllocator.delete_object(desc->oldIndex);
+                    if (desc->newIndex == curIndex)
+                        indexAllocator.delete_object(desc->newIndex);
+
+                    descAllocator.delete_object(desc);
+                }
+
+            private:
+                static constexpr size_t REAL_SIZE = SIZE + 2;
+                static constexpr size_t MAX_RETRY = 3;
+                obj_allocator<index_t> indexAllocator;
+                obj_allocator<op_description> descAllocator;
+                std::atomic<index_t*> index;
+                std::atomic<op_description*> registered{ nullptr };
+                std::array<std::atomic<task_t*>, REAL_SIZE> tasks;
+            };
+
+            struct task_t
+            {
+                task_t(const size_t sizeImpl, const size_t alignImpl) :
+                    size{ sizeImpl },
+                    align{ alignImpl }
+                {}
+
+                virtual ~task_t()
+                {}
+
+            public:
+                virtual void invoke() = 0;
+
+            public:
+                const size_t size;
+                const size_t align;
+            };
+
+            template<class Func, class TupleArgs>
+            struct task_func_t :
+                public task_t
+            {
+                task_func_t(Func func, TupleArgs args) :
+                    task_t{ sizeof(task_func_t), alignof(task_func_t) },
+                    invoked{ func },
+                    tupled{ args }
+                {
+                    static_assert(type_utils::is_tuple_invocable_r_v<void, Func, TupleArgs>);
                 }
 
             public:
-                const PHASE phase{ PHASE::RESERVE };
-                const OP op{ OP::PUSH_FRONT };
-                std::atomic<task_t*>& target;
-                task_t* const oldTask = nullptr;
-                task_t* const newTask = nullptr;
-                index_t* const oldIndex = nullptr;
-                index_t* const newIndex = nullptr;
+                void invoke() override
+                {
+                    std::apply(invoked, tupled);
+                }
+
+            private:
+                Func invoked;
+                TupleArgs tupled;
             };
 
-        public:
-            task_wait_free_deque(std::pmr::memory_resource* res) :
-                indexAllocator{ res },
-                descAllocator{ res }
+            template<class FromType, class Method, class TupleArgs>
+            struct task_method_t :
+                public task_func_t<Method,
+                type_utils::tuple_extend_front_t<FromType* const, TupleArgs>>
             {
-                index_t* init = indexAllocator.new_object();
-                index.store(init, std::memory_order_relaxed);
-            }
-
-            ~task_wait_free_deque()
-            {
-                indexAllocator.delete_object(index.load(std::memory_order_relaxed));
-                descAllocator.delete_object(registered.load(std::memory_order_relaxed));
-            }
-
-            bool push_front(task_t* task)
-            {
-                op_description* const desc = createDesc(task, OP::PUSH_FRONT);
-
-                bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                destroyDesc(desc);
-
-                return result;
-            }
-
-            bool push_back(task_t* task)
-            {
-                op_description* const desc = createDesc(task, OP::PUSH_BACK);
-
-                bool result = (desc->phase == op_description::PHASE::COMPLETE);
-                destroyDesc(desc);
-
-                return result;
-            }
-
-            task_t* pop_front()
-            {
-                op_description* const desc = createDesc(nullptr, OP::POP_FRONT);
-
-                task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
-                        desc->oldTask : nullptr);
-                destroyDesc(desc);
-
-                return result;
-            }
-
-            task_t* pop_back()
-            {
-                op_description* const desc = createDesc(nullptr, OP::POP_BACK);
-
-                task_t* result = (desc->phase == op_description::PHASE::COMPLETE ?
-                    desc->oldTask : nullptr);
-                destroyDesc(desc);
-
-                return result;
-            }
-
-        private:
-            op_description* createDesc(task_t* task, OP op)
-            {
-                index_t* const oldIndex = index.load(std::memory_order_acquire);
-                if (!oldIndex->isValid(op))
-                    return nullptr;
-
-                index_t* const newIndex = indexAllocator.new_object(oldIndex->move(op));
-                std::atomic<task_t*>& target = tasks[oldIndex->getTargetIndex(op)];
-
-                op_description* desc = descAllocator.new_object(op_description
-                    {
-                        .phase = op_description::PHASE::RESERVE,
-                        .op = op,
-                        .target = target,
-                        .oldTask = target.load(std::memory_order_acquire),
-                        .newTask = task,
-                        .oldIndex = oldIndex,
-                        .newIndex = newIndex
-                    });
-
-                applyDesc(desc);
-
-                return desc;
-            }
-
-            void applyDesc(op_description*& desc)
-            {
-                op_description* helpDesc = registered.load(std::memory_order_acquire);
-                if (helpDesc != nullptr)
-                    help_registered(helpDesc);
-
-                for (size_t i = 0; i < MAX_RETRY; ++i)
-                    if (fast_path(desc))
-                        return;
-
-                slow_path(desc);
-            }
-
-            bool fast_path(op_description*& desc)
-            {
-                if (!tryCommitTask(desc))
-                    return false;
-
-                if (!tryCommitIndex(desc))
-                {
-                    op_description* oldDesc = rollbackTask(desc);
-                    destroyDesc(oldDesc);
-
-                    return false;
-                }
-                
-                completeDesc(desc);
-
-                return true;
-            }
-
-            void slow_path(op_description*& desc)
-            {
-                op_description* oldDesc = nullptr;
-                while (true)
-                {
-                    if (tryRegister(oldDesc, desc))
-                        break;
-
-                    if (oldDesc == nullptr)
-                        continue;
-
-                    help_registered(oldDesc);
-                }
-
-                help_registered(desc);
-            }
-
-            void help_registered(op_description*& desc)
-            {
-                help_registered_progress(desc);
-                help_registered_complete(desc);
-            }
-
-            void help_registered_progress(op_description*& desc) noexcept
-            {
-                while (true)
-                {
-                    if (desc->phase != op_description::PHASE::RESERVE)
-                        return;
-
-                    if (!tryCommitTask(desc))
-                        continue;
-
-                    if (tryCommitIndex(desc))
-                        break;
-
-                    op_description* oldDesc = rollbackTask(desc);
-                    renewRegistered(oldDesc, desc);
-                }
-            }
-
-            void help_registered_complete(op_description*& desc) noexcept
-            {
-                if (desc->phase == op_description::PHASE::FAIL)
-                    return;
-
-                while (desc->phase != op_description::PHASE::COMPLETE)
-                {
-                    op_description* oldDesc = desc;
-                    desc = descAllocator.new_object(
-                        oldDesc->completed(index.load(std::memory_order_acquire)));
-                    renewRegistered(oldDesc, desc);
-                }
-            }
-
-            bool tryCommitTask(op_description* const desc) noexcept
-            {
-                task_t* oldTask = desc->oldTask;
-
-                if (tryEfficientCAS(desc->target, oldTask, desc->newTask))
-                    return true;
-
-                return oldTask == desc->newTask;
-            }
-
-            bool tryCommitIndex(op_description* const desc) noexcept
-            {
-                index_t* oldIndex = desc->oldIndex;
-
-                if (tryEfficientCAS(index, oldIndex, desc->newIndex))
-                    return true;
-
-                return oldIndex == desc->newIndex;
-            }
-
-            [[nodiscard]] op_description* rollbackTask(op_description*& desc)
-            {
-                desc->target.store(desc->oldTask, std::memory_order_release);
-
-                op_description* oldDesc = desc;
-                index_t* const oldIndex = index.load(std::memory_order_acquire);
-                if (oldIndex->isValid(oldDesc->op))
-                {
-                    index_t* const newIndex =
-                        indexAllocator.new_object(oldIndex->move(oldDesc->op));
-                    desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
-                }
-                else
-                    desc = descAllocator.new_object(oldDesc->failed(oldIndex));
-                return oldDesc;
-            }
-
-            void completeDesc(op_description*& desc)
-            {
-                op_description* const oldDesc = desc;
-                indexAllocator.delete_object(oldDesc->oldIndex);
-
-                desc = descAllocator.new_object(
-                    oldDesc->completed(index.load(std::memory_order_acquire)));
-                descAllocator.delete_object(oldDesc);
-            }
-
-            void renewRegistered(
-                op_description* const oldDesc,
-                op_description*& desc)
-            {
-                op_description* curDesc = oldDesc;
-                op_description* const newDesc = desc;
-                if (tryRegister(curDesc, newDesc))
-                {
-                    destroyDesc(oldDesc);
-
-                    desc = newDesc;
-                }
-                else
-                {
-                    destroyDesc(oldDesc);
-                    destroyDesc(newDesc);
-
-                    desc = curDesc;
-                }
-            }
-
-            bool tryRegister(
-                op_description*& expected,
-                op_description* const desired) noexcept
-            {
-                return tryEfficientCAS(registered, expected, desired);
-            }
-
-            template<class T>
-            bool tryEfficientCAS(std::atomic<T*>& target, T*& expected, T* const desired) noexcept
-            {
-                return target.compare_exchange_strong(expected, desired,
-                    std::memory_order_acq_rel, std::memory_order_acquire);
-            }
-
-            void destroyDesc(op_description* const desc)
-            {
-                op_description* oldDesc = desc;
-                while (!tryRegister(oldDesc, nullptr))
-                    if (oldDesc == desc)
-                        break;
-
-                index_t* const curIndex = index.load(std::memory_order_acquire);
-                if (desc->oldIndex == curIndex)
-                    indexAllocator.delete_object(desc->oldIndex);
-                if (desc->newIndex == curIndex)
-                    indexAllocator.delete_object(desc->newIndex);
-
-                descAllocator.delete_object(desc);
-            }
-
-        private:
-            static constexpr size_t REAL_SIZE = SIZE + 2;
-            static constexpr size_t MAX_RETRY = 3;
-            obj_allocator<index_t> indexAllocator;
-            obj_allocator<op_description> descAllocator;
-            std::atomic<index_t*> index;
-            std::atomic<op_description*> registered{ nullptr };
-            std::array<std::atomic<task_t*>, REAL_SIZE> tasks;
-        };
-
-        struct task_t
-        {
-            task_t(const size_t sizeImpl, const size_t alignImpl) :
-                size{ sizeImpl },
-                align{ alignImpl }
-            {}
-
-            virtual ~task_t()
-            {}
-
-        public:
-            virtual void invoke() = 0;
-
-        public:
-            const size_t size;
-            const size_t align;
-        };
-
-        template<class T, class Func, class TupleArgs>
-        struct task_impl_t :
-            task_t
-        {
-            task_impl_t(T* const fromObj, Func method, TupleArgs args) :
-                task_t{ sizeof(task_impl_t), alignof(task_impl_t) },
-                owner{ fromObj },
-                invoked{ method },
-                tupled{ args }
-            {
-
-            }
-
-        public:
-            void invoke() override
-            {
-                std::apply(invoked, std::tuple_cat(std::make_tuple(owner), tupled));
-            }
-
-        private:
-            T* const owner;
-            Func invoked;
-            TupleArgs tupled;
-        };
+                task_method_t(FromType* const fromObj, Method method, TupleArgs args) :
+                    task_func_t<Method,
+                    type_utils::tuple_extend_front_t<FromType* const, TupleArgs>>
+                    { method, std::tuple_cat(std::make_tuple(fromObj), args) }
+                {}
+            };
+        }
 
         struct scheduler
         {
@@ -799,14 +824,26 @@ namespace mtbase
             {}
 
         public:
-            template<class T, class Func, class... Args>
-            void registerTask(T* const fromObj, Func method, Args&&... args)
+            template<class Func, class... Args>
+            void registerTask(Func func, Args&&... args)
             {
-                static_assert(std::is_member_function_pointer_v<Func>);
-                static_assert(std::is_invocable_r_v<void, Func, T*, Args...>);
+                static_assert(!std::is_member_function_pointer_v<Func>);
+                static_assert(std::is_invocable_r_v<void, Func, decltype(args)...>);
 
                 registerTaskImpl(alloc.new_object(
-                    task_impl_t{ fromObj, method, std::make_tuple(std::forward<Args>(args)...) }));
+                    task_func_t{ func,
+                    std::forward_as_tuple(std::forward<Args>(args)...) }));
+            }
+
+            template<class T, class Method, class... Args>
+            void registerTaskMethod(T* const fromObj, Method method, Args&&... args)
+            {
+                static_assert(std::is_member_function_pointer_v<Method>);
+                static_assert(std::is_invocable_r_v<void, Method, T* const, decltype(args)...>);
+
+                registerTaskImpl(alloc.new_object(
+                    task_method_t{ fromObj, method,
+                    std::forward_as_tuple(std::forward<Args>(args)...) }));
             }
 
         protected:
@@ -819,7 +856,10 @@ namespace mtbase
                 alloc.deallocate_bytes(task, size, align);
             }
 
-            virtual void registerTaskImpl(task_t* const) = 0;
+            virtual void registerTaskImpl(task_t* const task)
+            {
+                destroyTask(task);
+            }
 
         private:
             generic_allocator alloc;
@@ -848,9 +888,7 @@ namespace mtbase
                 MAX_FLUSH_TICK{ maxFlushTick },
                 MAX_FLUSH_COUNT{ maxFlushCount },
                 MAX_FLUSH_COUNT_AT_ONCE{ maxFlushCountAtOnce }
-            {
-
-            }
+            {}
 
         public:
             void flush(thread_local_scheduler& threadSched)
@@ -877,13 +915,14 @@ namespace mtbase
                 if (checkTransitionCount() || checkTransitionTick())
                 {
                     release();
+
                     return;
                 }
 
-                threadSched.registerTask(this, &object_scheduler::flushOwned, threadSched);
+                threadSched.registerTaskMethod(this, &object_scheduler::flushOwned, threadSched);
             }
 
-            bool tryOwn()
+            bool tryOwn() noexcept
             {
                 bool oldIsOwned = false;
                 return isOwned.compare_exchange_strong(oldIsOwned, true,
@@ -892,7 +931,8 @@ namespace mtbase
 
             void flushTasks()
             {
-                for (size_t i = 0; i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
+                for (size_t i = 0;
+                    i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
                 {
                     task_t* const task = taskDeq.pop_front();
                     if (task == nullptr)
@@ -907,26 +947,24 @@ namespace mtbase
                 }
             }
 
-            bool checkTransitionTick()
+            bool checkTransitionTick() const noexcept
             {
-                if (MAX_FLUSH_TICK == steady_tick{ 0 })
-                    return false;
-
                 return clock_t::getSteadyTick() - tickBeginFlush > MAX_FLUSH_TICK;
             }
 
-            bool checkTransitionCount()
+            bool checkTransitionCount() const noexcept
             {
                 return cntFlushed >= MAX_FLUSH_COUNT;
             }
 
-            void release()
+            void release() noexcept
             {
                 isOwned.store(false, std::memory_order_release);
             }
 
         private:
-            task_wait_free_deque<(1 << 20)> taskDeq;
+            static constexpr size_t SIZE_TASK_DEQ = (1 << 20);
+            task_wait_free_deque<SIZE_TASK_DEQ> taskDeq;
             std::atomic_bool isOwned{ false };
             size_t cntFlushed;
             steady_tick tickBeginFlush;
