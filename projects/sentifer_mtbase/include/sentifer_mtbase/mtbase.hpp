@@ -194,9 +194,9 @@ namespace mtbase
         };
 
         template<class T>
-        struct mi_allocator
+        struct obj_allocator
         {
-            mi_allocator(mi_memory_resource* r) :
+            obj_allocator(std::pmr::memory_resource* r) :
                 genAlloc{ r }
             {}
 
@@ -473,7 +473,7 @@ namespace mtbase
             };
 
         public:
-            task_wait_free_deque(mi_memory_resource* res) :
+            task_wait_free_deque(std::pmr::memory_resource* res) :
                 indexAllocator{ res },
                 descAllocator{ res }
             {
@@ -742,8 +742,8 @@ namespace mtbase
         private:
             static constexpr size_t REAL_SIZE = SIZE + 2;
             static constexpr size_t MAX_RETRY = 3;
-            mi_allocator<index_t> indexAllocator;
-            mi_allocator<op_description> descAllocator;
+            obj_allocator<index_t> indexAllocator;
+            obj_allocator<op_description> descAllocator;
             std::atomic<index_t*> index;
             std::atomic<op_description*> registered{ nullptr };
             std::array<std::atomic<task_t*>, REAL_SIZE> tasks;
@@ -835,16 +835,30 @@ namespace mtbase
             }
         };
 
-        struct object_sheduler final :
+        struct object_scheduler final :
             public scheduler
         {
+            object_scheduler(
+                std::pmr::memory_resource* const res,
+                const steady_tick maxFlushTick,
+                const size_t maxFlushCount,
+                const size_t maxFlushCountAtOnce) :
+                scheduler{ res },
+                taskDeq{ res },
+                MAX_FLUSH_TICK{ maxFlushTick },
+                MAX_FLUSH_COUNT{ maxFlushCount },
+                MAX_FLUSH_COUNT_AT_ONCE{ maxFlushCountAtOnce }
+            {
+
+            }
+
         public:
             void flush(thread_local_scheduler& threadSched)
             {
                 if (!tryOwn())
                     return;
 
-                // set tickBeginFlush
+                tickBeginFlush = clock_t::getSteadyTick();
                 cntFlushed = 0;
                 flushOwned(threadSched);
             }
@@ -866,7 +880,7 @@ namespace mtbase
                     return;
                 }
 
-                threadSched.registerTask(this, &object_sheduler::flushOwned, threadSched);
+                threadSched.registerTask(this, &object_scheduler::flushOwned, threadSched);
             }
 
             bool tryOwn()
@@ -895,13 +909,10 @@ namespace mtbase
 
             bool checkTransitionTick()
             {
-                if (MAX_FLUSH_TICK == std::chrono::nanoseconds{ 0 })
+                if (MAX_FLUSH_TICK == steady_tick{ 0 })
                     return false;
 
-                // get current tick
-                std::chrono::nanoseconds tickTransition;
-
-                return tickTransition - tickBeginFlush > MAX_FLUSH_TICK;
+                return clock_t::getSteadyTick() - tickBeginFlush > MAX_FLUSH_TICK;
             }
 
             bool checkTransitionCount()
@@ -918,8 +929,8 @@ namespace mtbase
             task_wait_free_deque<(1 << 20)> taskDeq;
             std::atomic_bool isOwned{ false };
             size_t cntFlushed;
-            std::chrono::nanoseconds tickBeginFlush;
-            const std::chrono::nanoseconds MAX_FLUSH_TICK;
+            steady_tick tickBeginFlush;
+            const steady_tick MAX_FLUSH_TICK;
             const size_t MAX_FLUSH_COUNT;
             const size_t MAX_FLUSH_COUNT_AT_ONCE;
         };
