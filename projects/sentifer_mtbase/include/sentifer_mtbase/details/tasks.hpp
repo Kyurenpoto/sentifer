@@ -31,7 +31,7 @@ namespace mtbase
             invoked{ func },
             tupled{ args }
         {
-            static_assert(type_utils::is_tuple_invocable_r_v<void, Func, TupleArgs>);
+            static_assert(is_tuple_invocable_r_v<void, Func, TupleArgs>);
         }
 
     public:
@@ -48,11 +48,11 @@ namespace mtbase
     template<class FromType, class Method, class TupleArgs>
     struct task_method_t :
         public task_func_t<Method,
-        type_utils::tuple_extend_front_t<FromType* const, TupleArgs>>
+        tuple_extend_front_t<FromType* const, TupleArgs>>
     {
         task_method_t(FromType* const fromObj, Method method, TupleArgs args) :
             task_func_t<Method,
-            type_utils::tuple_extend_front_t<FromType* const, TupleArgs>>
+            tuple_extend_front_t<FromType* const, TupleArgs>>
         { method, std::tuple_cat(std::make_tuple(fromObj), args) }
         {}
     };

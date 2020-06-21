@@ -42,7 +42,9 @@ namespace mtbase
         template<class T, class... Args>
         void construct(T* p, Args&&... args)
         {
-            new(p) T{ std::forward<Args>(args)... };
+            not_null<T*> ptr = p;
+
+            new(ptr.get()) T{ std::forward<Args>(args)... };
         }
 
         template<class T>
