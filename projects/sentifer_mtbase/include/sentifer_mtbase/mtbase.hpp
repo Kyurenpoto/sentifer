@@ -817,9 +817,9 @@ namespace mtbase
             };
         }
 
-        struct scheduler
+        struct task_storage
         {
-            scheduler(std::pmr::memory_resource* const res) :
+            task_storage(std::pmr::memory_resource* const res) :
                 alloc{ res }
             {}
 
@@ -866,7 +866,7 @@ namespace mtbase
         };
 
         struct thread_local_scheduler final :
-            public scheduler
+            public task_storage
         {
         protected:
             void registerTaskImpl(task_t* const task) override
@@ -876,14 +876,14 @@ namespace mtbase
         };
 
         struct object_scheduler final :
-            public scheduler
+            public task_storage
         {
             object_scheduler(
                 std::pmr::memory_resource* const res,
                 const steady_tick maxFlushTick,
                 const size_t maxFlushCount,
                 const size_t maxFlushCountAtOnce) :
-                scheduler{ res },
+                task_storage{ res },
                 taskDeq{ res },
                 MAX_FLUSH_TICK{ maxFlushTick },
                 MAX_FLUSH_COUNT{ maxFlushCount },
