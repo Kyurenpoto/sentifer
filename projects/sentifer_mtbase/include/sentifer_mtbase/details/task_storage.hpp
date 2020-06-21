@@ -47,7 +47,7 @@ namespace mtbase
             alloc.deallocate_bytes(task, size, align);
         }
 
-        virtual void registerTaskImpl(task_t* const task)
+        virtual void registerTaskImpl(task_invoke_t* const task)
         {
             destroyTask(task);
         }

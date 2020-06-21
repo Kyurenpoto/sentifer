@@ -6,11 +6,13 @@ namespace mtbase
 {
     struct task_t
     {
+    protected:
         task_t(const size_t sizeImpl, const size_t alignImpl) :
             size{ sizeImpl },
             align{ alignImpl }
         {}
 
+    public:
         virtual ~task_t()
         {}
 
@@ -22,17 +24,33 @@ namespace mtbase
         const size_t align;
     };
 
-    template<class Func, class TupleArgs>
-    struct task_func_t :
+    struct task_invoke_t :
         public task_t
     {
+    protected:
+        task_invoke_t(size_t sizeImpl, size_t alignImpl) :
+            task_t{ sizeImpl, alignImpl }
+        {}
+
+    public:
+        virtual ~task_invoke_t()
+        {}
+    };
+
+    template<class Func, class TupleArgs>
+    struct task_func_t :
+        public task_invoke_t
+    {
         task_func_t(Func func, TupleArgs args) :
-            task_t{ sizeof(task_func_t), alignof(task_func_t) },
+            task_invoke_t{ sizeof(task_func_t), alignof(task_func_t) },
             invoked{ func },
             tupled{ args }
         {
             static_assert(is_tuple_invocable_r_v<void, Func, TupleArgs>);
         }
+
+        virtual ~task_func_t()
+        {}
 
     public:
         void invoke() override

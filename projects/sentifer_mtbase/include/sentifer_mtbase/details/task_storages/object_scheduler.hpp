@@ -39,7 +39,7 @@ namespace mtbase
         }
 
     protected:
-        void registerTaskImpl(task_t* const task) override
+        void registerTaskImpl(task_invoke_t* const task) override
         {
             if (taskDeq.push_back(task))
             {
