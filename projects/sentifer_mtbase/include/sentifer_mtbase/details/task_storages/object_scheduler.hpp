@@ -20,7 +20,6 @@ namespace mtbase
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
             task_storage{ res },
-            taskDeq{ res },
             dist{ distributor },
             MAX_FLUSH_TICK{ maxFlushTick },
             MAX_FLUSH_COUNT{ maxFlushCount },
@@ -41,10 +40,20 @@ namespace mtbase
     protected:
         void registerTaskImpl(task_invoke_t* const task) override
         {
-            if (taskDeq.push_back(task))
+            if (pushBaskTask(task))
             {
                 task_storage::registerTaskImpl(task);
             }
+        }
+
+        virtual bool pushBaskTask(task_invoke_t* const task)
+        {
+            return false;
+        }
+
+        virtual task_invoke_t* popFrontTask()
+        {
+            return nullptr;
         }
 
     private:
@@ -74,7 +83,7 @@ namespace mtbase
             for (size_t i = 0;
                 i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
             {
-                task_t* const task = taskDeq.pop_front();
+                task_t* const task = popFrontTask();
                 if (task == nullptr)
                 {
                     cntFlushed = MAX_FLUSH_COUNT;
@@ -103,8 +112,6 @@ namespace mtbase
         }
 
     private:
-        static constexpr size_t SIZE_TASK_DEQ = (1 << 20);
-        task_wait_free_deque<SIZE_TASK_DEQ> taskDeq;
         std::atomic_bool isOwned{ false };
         size_t cntFlushed{ 0 };
         steady_tick tickBeginFlush{ 0 };
@@ -115,7 +122,7 @@ namespace mtbase
     };
 
     template<size_t MAX_TASK_STORAGE = (1 << 20)>
-    struct sized_object_scheduler :
+    struct sized_object_scheduler final :
         public object_scheduler
     {
         sized_object_scheduler(
@@ -125,7 +132,33 @@ namespace mtbase
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
             object_scheduler
-        { res, distributor, maxFlushTick, maxFlushCount, maxFlushCountAtOnce }
+            { res, distributor, maxFlushTick, maxFlushCount, maxFlushCountAtOnce },
+            taskDeq{ res }
         {}
+
+    protected:
+        bool pushBaskTask(task_invoke_t* const task) override
+        {
+            return taskDeq.push_back(task);
+        }
+
+        task_invoke_t* popFrontTask() override
+        {
+            return toValidTask(taskDeq.pop_front());
+        }
+
+    private:
+        task_invoke_t* toValidTask(task_t* const task) const noexcept
+        {
+            return nullptr;
+        }
+
+        task_invoke_t* toValidTask(task_invoke_t* const task) const noexcept
+        {
+            return task;
+        }
+
+    private:
+        task_wait_free_deque<MAX_TASK_STORAGE> taskDeq;
     };
 }
