@@ -57,19 +57,7 @@ namespace mtbase
         }
 
     private:
-        void flushOwned(thread_local_scheduler& threadSched)
-        {
-            flushTasks();
-
-            if (checkTransitionCount() || checkTransitionTick())
-            {
-                release();
-
-                return;
-            }
-
-            threadSched.registerTaskMethod(this, &object_scheduler::flushOwned, threadSched);
-        }
+        void flushOwned(thread_local_scheduler& threadSched);
 
         bool tryOwn() noexcept
         {
@@ -83,7 +71,7 @@ namespace mtbase
             for (size_t i = 0;
                 i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
             {
-                task_t* const task = popFrontTask();
+                task_invoke_t* const task = popFrontTask();
                 if (task == nullptr)
                 {
                     cntFlushed = MAX_FLUSH_COUNT;

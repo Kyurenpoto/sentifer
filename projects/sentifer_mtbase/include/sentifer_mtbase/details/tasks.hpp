@@ -17,9 +17,6 @@ namespace mtbase
         {}
 
     public:
-        virtual void invoke() = 0;
-
-    public:
         const size_t size;
         const size_t align;
     };
@@ -35,6 +32,9 @@ namespace mtbase
     public:
         virtual ~task_invoke_t()
         {}
+
+    public:
+        virtual void invoke() = 0;
     };
 
     template<class Func, class TupleArgs>

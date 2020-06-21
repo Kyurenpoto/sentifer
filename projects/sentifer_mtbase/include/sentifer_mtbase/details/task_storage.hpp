@@ -8,6 +8,8 @@
 
 namespace mtbase
 {
+    struct object_scheduler;
+
     struct task_storage
     {
         task_storage(std::pmr::memory_resource* const res) :
@@ -27,7 +29,7 @@ namespace mtbase
         }
 
         template<class T, class Method, class... Args>
-        void registerTaskMethod(T* const fromObj, Method method, Args&&... args)
+        void registerTask(T* const fromObj, Method method, Args&&... args)
         {
             static_assert(std::is_member_function_pointer_v<Method>);
             static_assert(std::is_invocable_r_v<void, Method, T* const, decltype(args)...>);
@@ -35,6 +37,12 @@ namespace mtbase
             registerTaskImpl(alloc.new_object(
                 task_method_t{ fromObj, method,
                 std::forward_as_tuple(std::forward<Args>(args)...) }));
+        }
+
+        void registerTask(object_scheduler* const objectSched)
+        {
+            registerTaskImpl(alloc.new_object(
+                task_flush_object_scheduler_t{ objectSched }));
         }
 
     protected:

@@ -4,3 +4,4 @@
 #include "details/clocks.hpp"
 #include "details/task_storages/thread_local_scheduler.h"
 #include "details/task_storages/object_scheduler.hpp"
+#include "details/task_storages/object_scheduler_distributor.h"
