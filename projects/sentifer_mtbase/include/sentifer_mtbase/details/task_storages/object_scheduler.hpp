@@ -26,6 +26,8 @@ namespace mtbase
             MAX_FLUSH_COUNT_AT_ONCE{ maxFlushCountAtOnce }
         {}
 
+        virtual ~object_scheduler() = default;
+
     public:
         void flush(thread_local_scheduler& threadSched)
         {
@@ -40,7 +42,7 @@ namespace mtbase
     protected:
         void registerTaskImpl(task_invoke_t* const task) override
         {
-            if (pushBaskTask(task))
+            if (!pushBaskTask(task))
             {
                 task_storage::registerTaskImpl(task);
             }

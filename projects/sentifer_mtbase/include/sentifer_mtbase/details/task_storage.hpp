@@ -16,6 +16,8 @@ namespace mtbase
             alloc{ res }
         {}
 
+        virtual ~task_storage() = default;
+
     public:
         template<class Func, class... Args>
         void registerTask(Func func, Args&&... args)
