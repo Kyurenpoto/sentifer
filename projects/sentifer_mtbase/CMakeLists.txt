@@ -9,7 +9,8 @@ endif()
 project(sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Nice code base for multi-thread programming." LANGUAGES CXX)
 
 add_library(sentifer_mtbase STATIC
-	"src/src.cpp"
+	"src/tasks.cpp"
+	"src/object_scheduler.cpp"
 )
 target_compile_features(sentifer_mtbase PUBLIC cxx_std_20)
 

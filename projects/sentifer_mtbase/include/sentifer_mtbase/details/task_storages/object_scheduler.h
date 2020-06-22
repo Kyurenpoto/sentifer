@@ -31,84 +31,24 @@ namespace mtbase
         virtual ~object_scheduler() = default;
 
     public:
-        void flush(thread_local_scheduler& threadSched)
-        {
-            if (!tryOwn())
-                return;
-
-            tickBeginOccupying = clock_t::getSteadyTick();
-            tickFlushing = steady_tick{};
-            cntFlushed = 0;
-            flushOwned(threadSched);
-        }
+        void flush(thread_local_scheduler& threadSched);
 
     protected:
-        void registerTaskImpl(task_invoke_t* const task) override
-        {
-            if (!pushBaskTask(task))
-            {
-                task_storage::registerTaskImpl(task);
-            }
-        }
+        void registerTaskImpl(task_invoke_t* const task) override;
 
-        virtual bool pushBaskTask(task_invoke_t* const task)
-        {
-            return false;
-        }
-
-        virtual task_invoke_t* popFrontTask()
-        {
-            return nullptr;
-        }
+        virtual bool pushBaskTask(task_invoke_t* const task);
+        virtual task_invoke_t* popFrontTask();
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);
+        void flushTasks();
+        void invokeTask();
 
-        bool tryOwn() noexcept
-        {
-            bool oldIsOwned = false;
-            return isOwned.compare_exchange_strong(oldIsOwned, true,
-                std::memory_order_acq_rel, std::memory_order_acquire);
-        }
+        bool tryOwn() noexcept;
+        void release() noexcept;
 
-        void flushTasks()
-        {
-            for (size_t i = 0;
-                i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
-                invokeTask();
-        }
-
-        bool checkTransitionTick(const steady_tick tickEnd) const noexcept
-        {
-            return tickFlushing > MAX_OCCUPY_TICK_FLUSHING ||
-                tickEnd - tickBeginOccupying > MAX_OCCUPY_TICK;
-        }
-
-        bool checkTransitionCount() const noexcept
-        {
-            return cntFlushed >= MAX_FLUSH_COUNT;
-        }
-
-        void release() noexcept
-        {
-            isOwned.store(false, std::memory_order_release);
-        }
-
-        void invokeTask()
-        {
-            task_invoke_t* const task = popFrontTask();
-            if (task == nullptr)
-            {
-                cntFlushed = MAX_FLUSH_COUNT;
-
-                return;
-            }
-
-            task->invoke();
-            destroyTask(task);
-
-            ++cntFlushed;
-        }
+        bool checkTransitionTick(const steady_tick tickEnd) const noexcept;
+        bool checkTransitionCount() const noexcept;
 
     private:
         std::atomic_bool isOwned{ false };
