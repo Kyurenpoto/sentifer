@@ -4,7 +4,7 @@
 
 namespace mtbase
 {
-    struct object_scheduler_distributor final :
+    struct object_flush_scheduler final :
         public task_storage
     {
     protected:

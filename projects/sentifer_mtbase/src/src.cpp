@@ -18,7 +18,7 @@ void mtbase::object_scheduler::flushOwned(thread_local_scheduler& threadSched)
     if (checkTransitionCount() || checkTransitionTick(tickEnd))
     {
         release();
-        dist.registerTask(this);
+        flusher.registerTask(this);
 
         return;
     }

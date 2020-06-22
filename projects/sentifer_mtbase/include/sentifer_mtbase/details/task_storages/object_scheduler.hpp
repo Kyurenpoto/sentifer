@@ -8,20 +8,20 @@
 
 namespace mtbase
 {
-    struct object_scheduler_distributor;
+    struct object_flush_scheduler;
 
     struct object_scheduler :
         public task_storage
     {
         object_scheduler(
             std::pmr::memory_resource* const res,
-            object_scheduler_distributor& distributor,
+            object_flush_scheduler& objectFlushSched,
             const steady_tick maxOccupyTick,
             const steady_tick maxOccupyTickFlushing,
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
             task_storage{ res },
-            dist{ distributor },
+            flusher{ objectFlushSched },
             MAX_OCCUPY_TICK{ maxOccupyTick },
             MAX_OCCUPY_TICK_FLUSHING{ maxOccupyTickFlushing },
             MAX_FLUSH_COUNT{ maxFlushCount },
@@ -115,7 +115,7 @@ namespace mtbase
         size_t cntFlushed{ 0 };
         steady_tick tickBeginOccupying{ steady_tick{} };
         steady_tick tickFlushing{ steady_tick{} };
-        object_scheduler_distributor& dist;
+        object_flush_scheduler& flusher;
         const steady_tick MAX_OCCUPY_TICK;
         const steady_tick MAX_OCCUPY_TICK_FLUSHING;
         const size_t MAX_FLUSH_COUNT;
@@ -128,7 +128,7 @@ namespace mtbase
     {
         sized_object_scheduler(
             std::pmr::memory_resource* const res,
-            object_scheduler_distributor& distributor,
+            object_flush_scheduler& objectFlushSched,
             const steady_tick maxOccupyTick,
             const steady_tick maxOccupyTickFlushing,
             const size_t maxFlushCount,
@@ -136,7 +136,7 @@ namespace mtbase
             object_scheduler
             {
                 res,
-                distributor,
+                objectFlushSched,
                 maxOccupyTick,
                 maxOccupyTickFlushing,
                 maxFlushCount,
