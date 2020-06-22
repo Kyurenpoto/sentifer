@@ -16,12 +16,14 @@ namespace mtbase
         object_scheduler(
             std::pmr::memory_resource* const res,
             object_scheduler_distributor& distributor,
-            const steady_tick maxFlushTick,
+            const steady_tick maxOccupyTick,
+            const steady_tick maxOccupyTickFlushing,
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
             task_storage{ res },
             dist{ distributor },
-            MAX_FLUSH_TICK{ maxFlushTick },
+            MAX_OCCUPY_TICK{ maxOccupyTick },
+            MAX_OCCUPY_TICK_FLUSHING{ maxOccupyTickFlushing },
             MAX_FLUSH_COUNT{ maxFlushCount },
             MAX_FLUSH_COUNT_AT_ONCE{ maxFlushCountAtOnce }
         {}
@@ -34,7 +36,8 @@ namespace mtbase
             if (!tryOwn())
                 return;
 
-            tickBeginFlush = clock_t::getSteadyTick();
+            tickBeginOccupying = clock_t::getSteadyTick();
+            tickFlushing = steady_tick{};
             cntFlushed = 0;
             flushOwned(threadSched);
         }
@@ -70,25 +73,18 @@ namespace mtbase
 
         void flushTasks()
         {
+            const steady_tick tickBegin = clock_t::getSteadyTick();
             for (size_t i = 0;
                 i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
-            {
-                task_invoke_t* const task = popFrontTask();
-                if (task == nullptr)
-                {
-                    cntFlushed = MAX_FLUSH_COUNT;
-                    break;
-                }
+                invokeTask();
 
-                task->invoke();
-                destroyTask(task);
-                ++cntFlushed;
-            }
+            tickFlushing += (clock_t::getSteadyTick() - tickBegin);
         }
 
         bool checkTransitionTick() const noexcept
         {
-            return clock_t::getSteadyTick() - tickBeginFlush > MAX_FLUSH_TICK;
+            return tickFlushing > MAX_OCCUPY_TICK_FLUSHING ||
+                clock_t::getSteadyTick() - tickBeginOccupying > MAX_OCCUPY_TICK;
         }
 
         bool checkTransitionCount() const noexcept
@@ -101,12 +97,30 @@ namespace mtbase
             isOwned.store(false, std::memory_order_release);
         }
 
+        void invokeTask()
+        {
+            task_invoke_t* const task = popFrontTask();
+            if (task == nullptr)
+            {
+                cntFlushed = MAX_FLUSH_COUNT;
+
+                return;
+            }
+
+            task->invoke();
+            destroyTask(task);
+
+            ++cntFlushed;
+        }
+
     private:
         std::atomic_bool isOwned{ false };
         size_t cntFlushed{ 0 };
-        steady_tick tickBeginFlush{ 0 };
+        steady_tick tickBeginOccupying{ steady_tick{} };
+        steady_tick tickFlushing{ steady_tick{} };
         object_scheduler_distributor& dist;
-        const steady_tick MAX_FLUSH_TICK;
+        const steady_tick MAX_OCCUPY_TICK;
+        const steady_tick MAX_OCCUPY_TICK_FLUSHING;
         const size_t MAX_FLUSH_COUNT;
         const size_t MAX_FLUSH_COUNT_AT_ONCE;
     };
@@ -118,11 +132,19 @@ namespace mtbase
         sized_object_scheduler(
             std::pmr::memory_resource* const res,
             object_scheduler_distributor& distributor,
-            const steady_tick maxFlushTick,
+            const steady_tick maxOccupyTick,
+            const steady_tick maxOccupyTickFlushing,
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
             object_scheduler
-            { res, distributor, maxFlushTick, maxFlushCount, maxFlushCountAtOnce },
+            {
+                res,
+                distributor,
+                maxOccupyTick,
+                maxOccupyTickFlushing,
+                maxFlushCount,
+                maxFlushCountAtOnce
+            },
             taskDeq{ res }
         {}
 
