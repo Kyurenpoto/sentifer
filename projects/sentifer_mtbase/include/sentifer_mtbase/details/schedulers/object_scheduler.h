@@ -3,7 +3,7 @@
 #include <memory_resource>
 
 #include "../clocks.hpp"
-#include "../task_storage.hpp"
+#include "../scheduler.hpp"
 
 namespace mtbase
 {
@@ -11,7 +11,7 @@ namespace mtbase
     struct thread_local_scheduler;
 
     struct object_scheduler :
-        public task_storage
+        public scheduler
     {
         object_scheduler(
             std::pmr::memory_resource* const res,
@@ -20,7 +20,7 @@ namespace mtbase
             const steady_tick maxOccupyTickFlushing,
             const size_t maxFlushCount,
             const size_t maxFlushCountAtOnce) :
-            task_storage{ res },
+            scheduler{ res },
             flusher{ objectFlushSched },
             MAX_OCCUPY_TICK{ maxOccupyTick },
             MAX_OCCUPY_TICK_FLUSHING{ maxOccupyTickFlushing },

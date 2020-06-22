@@ -10,13 +10,13 @@ namespace mtbase
 {
     struct object_scheduler;
 
-    struct task_storage
+    struct scheduler
     {
-        task_storage(std::pmr::memory_resource* const res) :
+        scheduler(std::pmr::memory_resource* const res) :
             alloc{ res }
         {}
 
-        virtual ~task_storage() = default;
+        virtual ~scheduler() = default;
 
     public:
         template<class Func, class... Args>

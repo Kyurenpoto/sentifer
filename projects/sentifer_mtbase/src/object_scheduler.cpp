@@ -1,7 +1,7 @@
-#include "../include/sentifer_mtbase/details/task_storages/object_scheduler.h"
+#include "../include/sentifer_mtbase/details/schedulers/object_scheduler.h"
 
-#include "../include/sentifer_mtbase/details/task_storages/thread_local_scheduler.h"
-#include "../include/sentifer_mtbase/details/task_storages/object_flush_scheduler.h"
+#include "../include/sentifer_mtbase/details/schedulers/thread_local_scheduler.h"
+#include "../include/sentifer_mtbase/details/schedulers/object_flush_scheduler.h"
 
 using namespace mtbase;
 
@@ -21,7 +21,7 @@ void object_scheduler::registerTaskImpl(task_invoke_t* const task)
 {
     if (!pushBaskTask(task))
     {
-        task_storage::registerTaskImpl(task);
+        scheduler::registerTaskImpl(task);
     }
 }
 

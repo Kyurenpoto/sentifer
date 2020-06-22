@@ -1,11 +1,11 @@
 #pragma once
 
-#include "../task_storage.hpp"
+#include "../scheduler.hpp"
 
 namespace mtbase
 {
     struct thread_local_scheduler final :
-        public task_storage
+        public scheduler
     {
     protected:
         void registerTaskImpl(task_invoke_t* const task) override
