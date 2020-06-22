@@ -8,7 +8,7 @@ namespace mtbase
         public task_storage
     {
     protected:
-        void registerTaskImpl(task_flush_object_t* const task) override
+        void registerTaskImpl(task_invoke_t* const task) override
         {
 
         }
