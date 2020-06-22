@@ -78,14 +78,14 @@ namespace mtbase
     struct thread_local_scheduler;
     struct object_scheduler;
 
-    struct task_flush_object_scheduler_t :
+    struct task_flush_object_t :
         task_t
     {
-        task_flush_object_scheduler_t(object_scheduler* const objectScheduler) :
+        task_flush_object_t(object_scheduler* const objectScheduler) :
             task_t
         {
-            sizeof(task_flush_object_scheduler_t),
-            alignof(task_flush_object_scheduler_t)
+            sizeof(task_flush_object_t),
+            alignof(task_flush_object_t)
         },
             objectSched{ objectScheduler }
         {}

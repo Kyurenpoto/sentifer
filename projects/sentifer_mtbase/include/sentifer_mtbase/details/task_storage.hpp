@@ -44,7 +44,7 @@ namespace mtbase
         void registerTask(object_scheduler* const objectSched)
         {
             registerTaskImpl(alloc.new_object(
-                task_flush_object_scheduler_t{ objectSched }));
+                task_flush_object_t{ objectSched }));
         }
 
     protected:
@@ -57,12 +57,17 @@ namespace mtbase
             alloc.deallocate_bytes(task, size, align);
         }
 
+        virtual void registerTaskImpl(task_t* const task)
+        {
+            destroyTask(task);
+        }
+
         virtual void registerTaskImpl(task_invoke_t* const task)
         {
             destroyTask(task);
         }
 
-        virtual void registerTaskImpl(task_flush_object_scheduler_t* const task)
+        virtual void registerTaskImpl(task_flush_object_t* const task)
         {
             destroyTask(task);
         }

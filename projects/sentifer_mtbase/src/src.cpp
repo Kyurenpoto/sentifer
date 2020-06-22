@@ -1,6 +1,6 @@
 #include "../include/sentifer_mtbase/mtbase.h"
 
-void mtbase::task_flush_object_scheduler_t::invoke(
+void mtbase::task_flush_object_t::invoke(
     thread_local_scheduler& threadSched)
 {
     objectSched->flush(threadSched);
