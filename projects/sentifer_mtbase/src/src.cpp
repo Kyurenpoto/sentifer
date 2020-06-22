@@ -8,9 +8,14 @@ void mtbase::task_flush_object_scheduler_t::invoke(
 
 void mtbase::object_scheduler::flushOwned(thread_local_scheduler& threadSched)
 {
-    flushTasks();
+    const steady_tick tickBegin = clock_t::getSteadyTick();
 
-    if (checkTransitionCount() || checkTransitionTick())
+    flushTasks();
+    
+    const steady_tick tickEnd = clock_t::getSteadyTick();
+    tickFlushing += (tickEnd - tickBegin);
+
+    if (checkTransitionCount() || checkTransitionTick(tickEnd))
     {
         release();
         dist.registerTask(this);
