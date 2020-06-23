@@ -7,12 +7,10 @@ using namespace mtbase;
 
 void object_scheduler::flush(thread_local_scheduler& threadSched)
 {
-    control_block* block = threadSched.getControlBlock(this);
-
     if (!tryOwn())
         return;
 
-    block->reset();
+    threadSched.getControlBlock(this).reset();
 
     flushOwned(threadSched);
 }
@@ -38,17 +36,17 @@ task_invoke_t* object_scheduler::popFrontTask()
 void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
 {
     const steady_tick tickBegin = clock_t::getSteadyTick();
-    control_block* const block = threadSched.getControlBlock(this);
+    control_block& block = threadSched.getControlBlock(this);
 
     flushTasks(block);
 
     const steady_tick tickEnd = clock_t::getSteadyTick();
     
-    block->recordTickFlushing(tickBegin, tickEnd);
+    block.recordTickFlushing(tickBegin, tickEnd);
 
-    if (block->checkTransition(restriction, tickEnd))
+    if (block.checkTransition(restriction, tickEnd))
     {
-        block->release();
+        block.release();
         release();
         flusher.registerTask(this);
 
@@ -58,21 +56,21 @@ void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
     threadSched.registerTask(this, &object_scheduler::flushOwned, threadSched);
 }
 
-void object_scheduler::flushTasks(control_block* const block)
+void object_scheduler::flushTasks(control_block& block)
 {
     for (size_t i = 0;
         i < restriction.MAX_FLUSH_COUNT_AT_ONCE &&
-        !block->checkTransitionCount(restriction);
+        !block.checkTransitionCount(restriction);
         ++i)
         invokeTask(block);
 }
 
-void object_scheduler::invokeTask(control_block* const block)
+void object_scheduler::invokeTask(control_block& block)
 {
     task_invoke_t* const task = popFrontTask();
     if (task == nullptr)
     {
-        block->recordCountExpired(restriction);
+        block.recordCountExpired(restriction);
 
         return;
     }
@@ -80,7 +78,7 @@ void object_scheduler::invokeTask(control_block* const block)
     task->invoke();
     destroyTask(task);
 
-    block->recordCountFlushing();
+    block.recordCountFlushing();
 }
 
 bool object_scheduler::tryOwn() noexcept

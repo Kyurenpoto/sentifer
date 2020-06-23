@@ -72,12 +72,9 @@ namespace mtbase
     struct thread_local_scheduler final :
         public scheduler
     {
-        control_block* getControlBlock(const scheduler* const) noexcept;
+        control_block& getControlBlock(const scheduler* const) noexcept;
 
     protected:
-        void registerTaskImpl(task_invoke_t* const task) override
-        {
-
-        }
+        void registerTaskImpl(task_invoke_t* const task) override;
     };
 }

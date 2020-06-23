@@ -37,8 +37,8 @@ namespace mtbase
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);
-        void flushTasks(control_block* const block);
-        void invokeTask(control_block* const block);
+        void flushTasks(control_block& block);
+        void invokeTask(control_block& block);
 
         bool tryOwn() noexcept;
         void release() noexcept;
