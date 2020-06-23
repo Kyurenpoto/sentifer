@@ -14,19 +14,8 @@ namespace mtbase
         sized_object_scheduler(
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
-            const steady_tick maxOccupyTick,
-            const steady_tick maxOccupyTickFlushing,
-            const size_t maxFlushCount,
-            const size_t maxFlushCountAtOnce) :
-            object_scheduler
-            {
-                res,
-                objectFlushSched,
-                maxOccupyTick,
-                maxOccupyTickFlushing,
-                maxFlushCount,
-                maxFlushCountAtOnce
-            },
+            const scheduler_restriction restricts) :
+            object_scheduler{ res, objectFlushSched, restricts },
             taskDeq{ res }
         {}
 

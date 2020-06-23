@@ -58,7 +58,7 @@ void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
 void object_scheduler::flushTasks()
 {
     for (size_t i = 0;
-        i < MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
+        i < restriction.MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
         invokeTask();
 }
 
@@ -67,7 +67,7 @@ void object_scheduler::invokeTask()
     task_invoke_t* const task = popFrontTask();
     if (task == nullptr)
     {
-        cntFlushed = MAX_FLUSH_COUNT;
+        cntFlushed = restriction.MAX_FLUSH_COUNT;
 
         return;
     }
@@ -92,11 +92,11 @@ void object_scheduler::release() noexcept
 
 bool object_scheduler::checkTransitionTick(const steady_tick tickEnd) const noexcept
 {
-    return tickFlushing > MAX_OCCUPY_TICK_FLUSHING ||
-        tickEnd - tickBeginOccupying > MAX_OCCUPY_TICK;
+    return tickFlushing > restriction.MAX_OCCUPY_TICK_FLUSHING ||
+        tickEnd - tickBeginOccupying > restriction.MAX_OCCUPY_TICK;
 }
 
 bool object_scheduler::checkTransitionCount() const noexcept
 {
-    return cntFlushed >= MAX_FLUSH_COUNT;
+    return cntFlushed >= restriction.MAX_FLUSH_COUNT;
 }

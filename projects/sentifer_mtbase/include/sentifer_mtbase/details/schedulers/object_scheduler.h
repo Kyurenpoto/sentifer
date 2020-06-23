@@ -4,6 +4,7 @@
 
 #include "../clocks.hpp"
 #include "../scheduler.hpp"
+#include "../scheduler_restriction.h"
 
 namespace mtbase
 {
@@ -16,16 +17,10 @@ namespace mtbase
         object_scheduler(
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
-            const steady_tick maxOccupyTick,
-            const steady_tick maxOccupyTickFlushing,
-            const size_t maxFlushCount,
-            const size_t maxFlushCountAtOnce) :
+            const scheduler_restriction restricts) :
             scheduler{ res },
             flusher{ objectFlushSched },
-            MAX_OCCUPY_TICK{ maxOccupyTick },
-            MAX_OCCUPY_TICK_FLUSHING{ maxOccupyTickFlushing },
-            MAX_FLUSH_COUNT{ maxFlushCount },
-            MAX_FLUSH_COUNT_AT_ONCE{ maxFlushCountAtOnce }
+            restriction{ restricts }
         {}
 
         virtual ~object_scheduler() = default;
@@ -56,9 +51,6 @@ namespace mtbase
         steady_tick tickBeginOccupying{ steady_tick{} };
         steady_tick tickFlushing{ steady_tick{} };
         object_flush_scheduler& flusher;
-        const steady_tick MAX_OCCUPY_TICK;
-        const steady_tick MAX_OCCUPY_TICK_FLUSHING;
-        const size_t MAX_FLUSH_COUNT;
-        const size_t MAX_FLUSH_COUNT_AT_ONCE;
+        const scheduler_restriction restriction;
     };
 }
