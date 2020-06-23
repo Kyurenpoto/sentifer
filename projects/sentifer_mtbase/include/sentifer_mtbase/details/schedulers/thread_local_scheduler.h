@@ -6,6 +6,8 @@
 
 namespace mtbase
 {
+    struct thread_local_scheduler;
+
     struct control_block
     {
         void reset() noexcept
@@ -63,6 +65,7 @@ namespace mtbase
         }
 
     public:
+        thread_local_scheduler& owner;
         const scheduler* sched{ nullptr };
         size_t cntFlushed{ 0 };
         steady_tick tickBeginOccupying{ steady_tick{} };

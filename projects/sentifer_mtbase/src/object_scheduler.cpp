@@ -75,20 +75,23 @@ void object_scheduler::executeTask(control_block& block)
         return;
     }
 
-    invokeTask(task);
+    invokeTask(block, task);
     destroyTask(task);
-
-    block.recordCountFlushing();
 }
 
-void object_scheduler::invokeTask(task_t* const task) const
-{
+void object_scheduler::invokeTask(
+    control_block& block,
+    task_t* const task)
+    const
+{}
 
-}
-
-void object_scheduler::invokeTask(task_invoke_t* const task) const
+void object_scheduler::invokeTask(
+    control_block& block,
+    task_invoke_t* const task)
+    const
 {
     task->invoke();
+    block.recordCountFlushing();
 }
 
 bool object_scheduler::tryOwn() noexcept

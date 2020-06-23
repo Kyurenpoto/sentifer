@@ -16,7 +16,8 @@ namespace mtbase
             alloc{ res }
         {}
 
-        virtual ~scheduler() = default;
+        virtual ~scheduler()
+        {}
 
     public:
         template<class Func, class... Args>

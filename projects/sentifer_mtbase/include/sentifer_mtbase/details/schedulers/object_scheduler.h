@@ -24,7 +24,8 @@ namespace mtbase
             restriction{ restricts }
         {}
 
-        virtual ~object_scheduler() = default;
+        virtual ~object_scheduler()
+        {}
 
     public:
         void flush(thread_local_scheduler& threadSched);
@@ -40,8 +41,8 @@ namespace mtbase
         void flushTasks(control_block& block);
         void executeTask(control_block& block);
 
-        void invokeTask(task_t* const task) const;
-        void invokeTask(task_invoke_t* const task) const;
+        void invokeTask(control_block& block, task_t* const task) const;
+        void invokeTask(control_block& block, task_invoke_t* const task) const;
 
         bool tryOwn() noexcept;
         void release() noexcept;
