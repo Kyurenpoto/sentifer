@@ -1,14 +1,8 @@
 #pragma once
 
-#include <cstdlib>
-
 namespace mtbase
 {
-    void do_assert(bool condition)
-    {
-        if (!condition)
-            std::abort();
-    }
+    void do_assert(bool condition);
 
 #define MTBASE_ASSERT(condition) do_assert(condition)
 }

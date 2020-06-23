@@ -11,6 +11,7 @@ project(sentifer_mtbase VERSION 0.1.0 DESCRIPTION "Nice code base for multi-thre
 add_library(sentifer_mtbase STATIC
 	"src/tasks.cpp"
 	"src/object_scheduler.cpp"
+	"src/mtbase_assert.cpp"
 )
 target_compile_features(sentifer_mtbase PUBLIC cxx_std_20)
 
