@@ -25,20 +25,9 @@ namespace mtbase
             return taskDeq.push_back(task);
         }
 
-        task_invoke_t* popFrontTask() override
+        task_t* popFrontTask() override
         {
-            return toValidTask(taskDeq.pop_front());
-        }
-
-    private:
-        task_invoke_t* toValidTask(task_t* const task) const noexcept
-        {
-            return nullptr;
-        }
-
-        task_invoke_t* toValidTask(task_invoke_t* const task) const noexcept
-        {
-            return task;
+            return taskDeq.pop_front();
         }
 
     private:

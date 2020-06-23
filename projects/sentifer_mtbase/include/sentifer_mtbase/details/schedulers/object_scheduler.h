@@ -33,12 +33,15 @@ namespace mtbase
         void registerTaskImpl(task_invoke_t* const task) override;
 
         virtual bool pushBaskTask(task_invoke_t* const task);
-        virtual task_invoke_t* popFrontTask();
+        virtual task_t* popFrontTask();
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);
         void flushTasks(control_block& block);
-        void invokeTask(control_block& block);
+        void executeTask(control_block& block);
+
+        void invokeTask(task_t* const task) const;
+        void invokeTask(task_invoke_t* const task) const;
 
         bool tryOwn() noexcept;
         void release() noexcept;

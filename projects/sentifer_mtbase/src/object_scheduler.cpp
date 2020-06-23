@@ -28,7 +28,7 @@ bool object_scheduler::pushBaskTask(task_invoke_t* const task)
     return false;
 }
 
-task_invoke_t* object_scheduler::popFrontTask()
+task_t* object_scheduler::popFrontTask()
 {
     return nullptr;
 }
@@ -62,12 +62,12 @@ void object_scheduler::flushTasks(control_block& block)
         i < restriction.MAX_FLUSH_COUNT_AT_ONCE &&
         !block.checkTransitionCount(restriction);
         ++i)
-        invokeTask(block);
+        executeTask(block);
 }
 
-void object_scheduler::invokeTask(control_block& block)
+void object_scheduler::executeTask(control_block& block)
 {
-    task_invoke_t* const task = popFrontTask();
+    task_t* const task = popFrontTask();
     if (task == nullptr)
     {
         block.recordCountExpired(restriction);
@@ -75,10 +75,20 @@ void object_scheduler::invokeTask(control_block& block)
         return;
     }
 
-    task->invoke();
+    invokeTask(task);
     destroyTask(task);
 
     block.recordCountFlushing();
+}
+
+void object_scheduler::invokeTask(task_t* const task) const
+{
+
+}
+
+void object_scheduler::invokeTask(task_invoke_t* const task) const
+{
+    task->invoke();
 }
 
 bool object_scheduler::tryOwn() noexcept
