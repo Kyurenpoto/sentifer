@@ -7,12 +7,12 @@ using namespace mtbase;
 
 void object_scheduler::flush(thread_local_scheduler& threadSched)
 {
+    control_block* block = threadSched.getControlBlock(this);
+
     if (!tryOwn())
         return;
 
-    tickBeginOccupying = clock_t::getSteadyTick();
-    tickFlushing = steady_tick{};
-    cntFlushed = 0;
+    block->reset();
 
     flushOwned(threadSched);
 }
@@ -21,7 +21,7 @@ void object_scheduler::registerTaskImpl(task_invoke_t* const task)
 {
     if (!pushBaskTask(task))
     {
-        scheduler::registerTaskImpl(task);
+        destroyTask(task);
     }
 }
 
@@ -38,14 +38,17 @@ task_invoke_t* object_scheduler::popFrontTask()
 void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
 {
     const steady_tick tickBegin = clock_t::getSteadyTick();
+    control_block* const block = threadSched.getControlBlock(this);
 
-    flushTasks();
+    flushTasks(block);
 
     const steady_tick tickEnd = clock_t::getSteadyTick();
-    tickFlushing += (tickEnd - tickBegin);
+    
+    block->recordTickFlushing(tickBegin, tickEnd);
 
-    if (checkTransitionCount() || checkTransitionTick(tickEnd))
+    if (block->checkTransition(restriction, tickEnd))
     {
+        block->release();
         release();
         flusher.registerTask(this);
 
@@ -55,19 +58,21 @@ void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
     threadSched.registerTask(this, &object_scheduler::flushOwned, threadSched);
 }
 
-void object_scheduler::flushTasks()
+void object_scheduler::flushTasks(control_block* const block)
 {
     for (size_t i = 0;
-        i < restriction.MAX_FLUSH_COUNT_AT_ONCE && !checkTransitionCount(); ++i)
-        invokeTask();
+        i < restriction.MAX_FLUSH_COUNT_AT_ONCE &&
+        !block->checkTransitionCount(restriction);
+        ++i)
+        invokeTask(block);
 }
 
-void object_scheduler::invokeTask()
+void object_scheduler::invokeTask(control_block* const block)
 {
     task_invoke_t* const task = popFrontTask();
     if (task == nullptr)
     {
-        cntFlushed = restriction.MAX_FLUSH_COUNT;
+        block->recordCountExpired(restriction);
 
         return;
     }
@@ -75,28 +80,17 @@ void object_scheduler::invokeTask()
     task->invoke();
     destroyTask(task);
 
-    ++cntFlushed;
+    block->recordCountFlushing();
 }
 
 bool object_scheduler::tryOwn() noexcept
 {
-    bool oldIsOwned = false;
-    return isOwned.compare_exchange_strong(oldIsOwned, true,
+    bool oldOwned = false;
+    return isOwned.compare_exchange_strong(oldOwned, true,
         std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
 void object_scheduler::release() noexcept
 {
     isOwned.store(false, std::memory_order_release);
-}
-
-bool object_scheduler::checkTransitionTick(const steady_tick tickEnd) const noexcept
-{
-    return tickFlushing > restriction.MAX_OCCUPY_TICK_FLUSHING ||
-        tickEnd - tickBeginOccupying > restriction.MAX_OCCUPY_TICK;
-}
-
-bool object_scheduler::checkTransitionCount() const noexcept
-{
-    return cntFlushed >= restriction.MAX_FLUSH_COUNT;
 }

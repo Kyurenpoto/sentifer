@@ -10,6 +10,7 @@ namespace mtbase
 {
     struct object_flush_scheduler;
     struct thread_local_scheduler;
+    struct control_block;
 
     struct object_scheduler :
         public scheduler
@@ -17,7 +18,7 @@ namespace mtbase
         object_scheduler(
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
-            const scheduler_restriction restricts) :
+            const scheduler_restriction&& restricts) :
             scheduler{ res },
             flusher{ objectFlushSched },
             restriction{ restricts }
@@ -36,20 +37,14 @@ namespace mtbase
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);
-        void flushTasks();
-        void invokeTask();
+        void flushTasks(control_block* const block);
+        void invokeTask(control_block* const block);
 
         bool tryOwn() noexcept;
         void release() noexcept;
 
-        bool checkTransitionTick(const steady_tick tickEnd) const noexcept;
-        bool checkTransitionCount() const noexcept;
-
     private:
         std::atomic_bool isOwned{ false };
-        size_t cntFlushed{ 0 };
-        steady_tick tickBeginOccupying{ steady_tick{} };
-        steady_tick tickFlushing{ steady_tick{} };
         object_flush_scheduler& flusher;
         const scheduler_restriction restriction;
     };

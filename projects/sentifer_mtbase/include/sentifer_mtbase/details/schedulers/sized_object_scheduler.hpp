@@ -14,8 +14,8 @@ namespace mtbase
         sized_object_scheduler(
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
-            const scheduler_restriction restricts) :
-            object_scheduler{ res, objectFlushSched, restricts },
+            const scheduler_restriction&& restricts) :
+            object_scheduler{ res, objectFlushSched, std::move(restricts) },
             taskDeq{ res }
         {}
 
