@@ -1,5 +1,6 @@
 #include "../include/sentifer_mtbase/details/schedulers/object_flush_scheduler.h"
 
+#include "../include/sentifer_mtbase/details/control_block.h"
 #include "../include/sentifer_mtbase/details/schedulers/thread_local_scheduler.h"
 
 using namespace mtbase;
