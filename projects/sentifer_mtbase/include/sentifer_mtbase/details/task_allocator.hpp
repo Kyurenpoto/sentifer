@@ -13,30 +13,22 @@ namespace mtbase
         {}
 
     public:
-        template<class Func, class... Args>
-        task_invoke_t* new_func_task(Func func, Args&&... args)
+        template<class Func, class TupleArgs>
+        decltype(auto) new_func_task(Func&& func, TupleArgs&& args)
         {
-            using RetType =
-                task_func_t<Func, decltype(
-                    std::forward_as_tuple(std::forward<Args>(args)...))>;
-
-            return generic_allocator::new_object<RetType>(
-                func, std::forward_as_tuple(std::forward<Args>(args)...));
+            return generic_allocator::new_object<task_func_t<Func, TupleArgs>>(
+                std::forward<Func>(func), std::forward<TupleArgs>(args));
         }
 
-        template<class T, class Method, class... Args>
-        task_invoke_t* new_method_task(T* const fromObj, Method&& method, Args&&... args)
+        template<class T, class Method, class TupleArgs>
+        decltype(auto) new_method_task(
+            T* const fromObj, Method&& method, TupleArgs&& args)
         {
-            using RetType =
-                task_method_t<T, Method, decltype(
-                    std::forward_as_tuple(std::forward<Args>(args)...))>;
-
-            return generic_allocator::new_object<RetType>(
-                fromObj, method,
-                std::forward_as_tuple(std::forward<Args>(args)...));
+            return generic_allocator::new_object<task_method_t<T, Method, TupleArgs>>(
+                fromObj, std::forward<Method>(method), std::forward<TupleArgs>(args));
         }
 
-        task_flush_object_t* new_flush_object_task(object_scheduler* const objectSched)
+        decltype(auto) new_flush_object_task(object_scheduler* const objectSched)
         {
             return generic_allocator::new_object<task_flush_object_t>(objectSched);
         }

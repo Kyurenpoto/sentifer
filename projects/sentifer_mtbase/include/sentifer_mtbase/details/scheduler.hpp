@@ -21,16 +21,19 @@ namespace mtbase
 
     public:
         template<class Func, class... Args>
-        void registerFuncTask(Func func, Args&&... args)
+        void registerFuncTask(Func&& func, Args&&... args)
         {
-            registerTaskImpl(alloc.new_func_task(func, std::forward<Args>(args)...));
+            registerTaskImpl(alloc.new_func_task(
+                std::forward<Func>(func),
+                std::forward_as_tuple(std::forward<Args>(args)...)));
         }
 
         template<class T, class Method, class... Args>
-        void registerMethodTask(T* const fromObj, Method method, Args&&... args)
+        void registerMethodTask(T* const fromObj, Method&& method, Args&&... args)
         {
             registerTaskImpl(alloc.new_method_task(
-                fromObj, method, std::forward<Args>(args)...));
+                fromObj, std::forward<Method>(method),
+                std::forward_as_tuple(std::forward<Args>(args)...)));
         }
 
         void registerFlushObjectTask(object_scheduler* const objectSched)

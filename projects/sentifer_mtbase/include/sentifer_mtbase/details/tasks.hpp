@@ -52,9 +52,11 @@ namespace mtbase
         tuple_extend_front_t<FromType* const, TupleArgs>>
     {
         task_method_t(FromType* const fromObj, Method&& method, TupleArgs&& args) :
-            task_func_t<Method,
-            tuple_extend_front_t<FromType* const, TupleArgs>>
-        { std::forward<Method>(method), std::tuple_cat(std::make_tuple(fromObj), args) }
+            task_func_t<Method, tuple_extend_front_t<FromType* const, TupleArgs>>
+            {
+                std::forward<Method>(method),
+                std::tuple_cat(std::make_tuple(fromObj), args)
+            }
         {}
     };
 

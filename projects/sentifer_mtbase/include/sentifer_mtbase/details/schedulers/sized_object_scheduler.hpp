@@ -7,7 +7,7 @@
 
 namespace mtbase
 {
-    template<size_t MAX_TASK_STORAGE = (1 << 20)>
+    template<size_t MAX_STORAGE_SIZE = (1 << 20)>
     struct sized_object_scheduler final :
         public object_scheduler
     {
@@ -19,7 +19,7 @@ namespace mtbase
             {
                 res,
                 objectFlushSched,
-                new task_wait_free_deque<MAX_TASK_STORAGE>{ res },
+                new task_wait_free_deque<MAX_STORAGE_SIZE>{ res },
                 std::move(restricts)
             }
         {}
