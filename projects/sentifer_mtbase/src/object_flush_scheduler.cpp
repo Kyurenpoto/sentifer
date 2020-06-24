@@ -1,5 +1,6 @@
 #include "../include/sentifer_mtbase/details/schedulers/object_flush_scheduler.h"
 
+#include "../include/sentifer_mtbase/details/base_structures.hpp"
 #include "../include/sentifer_mtbase/details/control_block.h"
 #include "../include/sentifer_mtbase/details/schedulers/thread_local_scheduler.h"
 
@@ -19,20 +20,10 @@ void object_flush_scheduler::flush(thread_local_scheduler& threadSched)
 
 void object_flush_scheduler::registerTaskImpl(task_flush_object_t* const task)
 {
-    if (!pushBaskTask(task))
+    if (!storage->push_back(task))
     {
         destroyTask(task);
     }
-}
-
-bool object_flush_scheduler::pushBaskTask(task_flush_object_t* const task)
-{
-    return false;
-}
-
-task_t* object_flush_scheduler::popFrontTask()
-{
-    return nullptr;
 }
 
 void object_flush_scheduler::flushTasks(control_block& block)
@@ -46,7 +37,7 @@ void object_flush_scheduler::flushTasks(control_block& block)
 
 void object_flush_scheduler::executeTask(control_block& block)
 {
-    task_t* const task = popFrontTask();
+    task_t* const task = storage->pop_front();
     if (task == nullptr)
     {
         block.recordCountExpired(restriction);

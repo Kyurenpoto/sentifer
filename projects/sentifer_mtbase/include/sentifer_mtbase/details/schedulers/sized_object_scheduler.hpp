@@ -15,22 +15,13 @@ namespace mtbase
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
             const scheduler_restriction&& restricts) :
-            object_scheduler{ res, objectFlushSched, std::move(restricts) },
-            taskDeq{ res }
+            object_scheduler
+            {
+                res,
+                objectFlushSched,
+                new task_wait_free_deque<MAX_TASK_STORAGE>{ res },
+                std::move(restricts)
+            }
         {}
-
-    protected:
-        bool pushBaskTask(task_invoke_t* const task) override
-        {
-            return taskDeq.push_back(task);
-        }
-
-        task_t* popFrontTask() override
-        {
-            return taskDeq.pop_front();
-        }
-
-    private:
-        task_wait_free_deque<MAX_TASK_STORAGE> taskDeq;
     };
 }

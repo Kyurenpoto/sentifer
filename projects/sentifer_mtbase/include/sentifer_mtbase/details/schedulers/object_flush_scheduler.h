@@ -9,14 +9,17 @@ namespace mtbase
 {
     struct thread_local_scheduler;
     struct control_block;
+    struct task_storage;
 
     struct object_flush_scheduler final :
         public scheduler
     {
         object_flush_scheduler(
             std::pmr::memory_resource* const res,
+            task_storage* const taskStorage,
             const scheduler_restriction&& restricts) :
             scheduler{ res },
+            storage{ taskStorage },
             restriction{ restricts }
         {}
 
@@ -29,9 +32,6 @@ namespace mtbase
     protected:
         void registerTaskImpl(task_flush_object_t* const task) override;
 
-        virtual bool pushBaskTask(task_flush_object_t* const task);
-        virtual task_t* popFrontTask();
-
     private:
         void flushTasks(control_block& block);
         void executeTask(control_block& block);
@@ -42,6 +42,7 @@ namespace mtbase
             control_block& block, task_flush_object_t* const task) const;
 
     private:
+        task_storage* const storage;
         const scheduler_restriction restriction;
     };
 }

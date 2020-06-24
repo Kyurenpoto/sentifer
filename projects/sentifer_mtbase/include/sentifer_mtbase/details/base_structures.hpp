@@ -23,7 +23,8 @@ namespace mtbase
     };
 
     template<size_t SIZE>
-    struct task_wait_free_deque final
+    struct task_wait_free_deque final :
+        public task_storage
     {
         static_assert(SIZE >= BASE_ALIGN * 8);
         static_assert(SIZE <= 0xFFFF'FFFD);
@@ -219,7 +220,7 @@ namespace mtbase
             descAllocator.delete_object(registered.load(std::memory_order_relaxed));
         }
 
-        bool push_front(task_t* task)
+        bool push_front(task_t* task) override
         {
             op_description* const desc = createDesc(task, OP::PUSH_FRONT);
 
@@ -229,7 +230,7 @@ namespace mtbase
             return result;
         }
 
-        bool push_back(task_t* task)
+        bool push_back(task_t* task) override
         {
             op_description* const desc = createDesc(task, OP::PUSH_BACK);
 
@@ -239,7 +240,7 @@ namespace mtbase
             return result;
         }
 
-        task_t* pop_front()
+        task_t* pop_front() override
         {
             op_description* const desc = createDesc(nullptr, OP::POP_FRONT);
 
@@ -250,7 +251,7 @@ namespace mtbase
             return result;
         }
 
-        task_t* pop_back()
+        task_t* pop_back() override
         {
             op_description* const desc = createDesc(nullptr, OP::POP_BACK);
 
