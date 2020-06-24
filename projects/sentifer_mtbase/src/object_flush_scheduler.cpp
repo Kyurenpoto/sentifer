@@ -13,7 +13,8 @@ void object_flush_scheduler::flush(thread_local_scheduler& threadSched)
 
     block.release();
 
-    threadSched.registerTask(this, &object_flush_scheduler::flush, threadSched);
+    threadSched.registerMethodTask(
+        this, &object_flush_scheduler::flush, threadSched);
 }
 
 void object_flush_scheduler::registerTaskImpl(task_flush_object_t* const task)

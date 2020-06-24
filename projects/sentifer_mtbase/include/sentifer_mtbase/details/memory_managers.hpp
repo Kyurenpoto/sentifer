@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <memory_resource>
 
+#include "type_utils.hpp"
+
 namespace mtbase
 {
     struct generic_allocator
@@ -11,6 +13,9 @@ namespace mtbase
 
         generic_allocator(std::pmr::memory_resource* r) :
             res{ r }
+        {}
+
+        virtual ~generic_allocator()
         {}
 
     public:
@@ -36,27 +41,19 @@ namespace mtbase
         template<class T>
         void deallocate_object(T* p, size_t n = 1)
         {
-            deallocate_bytes(p, n * sizeof(T), alignof(T));
+            deallocate_bytes(not_null<T*>{ p }.get(), n * sizeof(T), alignof(T));
         }
 
         template<class T, class... Args>
         void construct(T* p, Args&&... args)
         {
-            not_null<T*> ptr = p;
-
-            new(ptr.get()) T{ std::forward<Args>(args)... };
-        }
-
-        template<class T>
-        void construct(T* p, T&& other)
-        {
-            new(p) T{ other };
+            new(not_null<T*>{ p }.get()) T{ std::forward<Args>(args)... };
         }
 
         template<class T>
         void destroy(T* p)
         {
-            p->~T();
+            not_null<T*>{ p }.get()->~T();
         }
 
         template<class T, class... Args>
@@ -71,24 +68,7 @@ namespace mtbase
             catch (...)
             {
                 deallocate_object(p);
-                throw;
-            }
 
-            return p;
-        }
-
-        template<class T>
-        [[nodiscard]] T* new_object(T&& other)
-        {
-            T* p = allocate_object<T>();
-
-            try
-            {
-                construct(p, other);
-            }
-            catch (...)
-            {
-                deallocate_object(p);
                 throw;
             }
 
@@ -112,30 +92,23 @@ namespace mtbase
     };
 
     template<class T>
-    struct obj_allocator
+    struct obj_allocator :
+        public generic_allocator
     {
         obj_allocator(std::pmr::memory_resource* r) :
-            genAlloc{ r }
+            generic_allocator{ r }
         {}
 
     public:
         template<class... Args>
         [[nodiscard]] T* new_object(Args&&... args)
         {
-            return genAlloc.new_object<T>(std::forward<Args>(args)...);
-        }
-
-        [[nodiscard]] T* new_object(T&& other)
-        {
-            return genAlloc.new_object<T>(other);
+            return generic_allocator::new_object<T>(std::forward<Args>(args)...);
         }
 
         void delete_object(T* p)
         {
-            genAlloc.delete_object(p);
+            generic_allocator::delete_object(not_null<T*>{ p }.get());
         }
-
-    private:
-        generic_allocator genAlloc;
     };
 }

@@ -14,6 +14,14 @@ namespace mtbase
 
     static_assert(BASE_ALIGN == 8, "mtbase is only available on x64");
 
+    struct task_storage
+    {
+        virtual bool push_front(task_t* task) = 0;
+        virtual bool push_back(task_t* task) = 0;
+        virtual task_t* pop_front() = 0;
+        virtual task_t* pop_back() = 0;
+    };
+
     template<size_t SIZE>
     struct task_wait_free_deque final
     {

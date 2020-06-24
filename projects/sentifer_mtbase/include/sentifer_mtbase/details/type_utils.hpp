@@ -7,12 +7,6 @@
 
 namespace mtbase
 {
-    template<class Ret, class... Args>
-    Ret result_of(Ret(*)(Args...));
-
-    template<class Func>
-    using result_of_t = decltype(result_of(std::declval<Func>()));
-
     template<class Ret, class Func, class TupleArgs, class IndexSeq>
     struct is_tuple_invocable_r_impl
     {};

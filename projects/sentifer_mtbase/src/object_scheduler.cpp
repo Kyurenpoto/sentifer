@@ -49,12 +49,12 @@ void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
     {
         block.release();
         release();
-        flusher.registerTask(this);
+        flusher.registerFlushObjectTask(this);
 
         return;
     }
 
-    threadSched.registerTask(this, &object_scheduler::flushOwned, threadSched);
+    threadSched.registerMethodTask(this, &object_scheduler::flushOwned, threadSched);
 }
 
 void object_scheduler::flushTasks(control_block& block)

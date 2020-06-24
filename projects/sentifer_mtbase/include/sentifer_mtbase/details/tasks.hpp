@@ -6,30 +6,13 @@ namespace mtbase
 {
     struct task_t
     {
-    protected:
-        task_t(const size_t sizeImpl, const size_t alignImpl) :
-            size{ sizeImpl },
-            align{ alignImpl }
-        {}
-
-    public:
         virtual ~task_t()
         {}
-
-    public:
-        const size_t size;
-        const size_t align;
     };
 
     struct task_invoke_t :
         public task_t
     {
-    protected:
-        task_invoke_t(size_t sizeImpl, size_t alignImpl) :
-            task_t{ sizeImpl, alignImpl }
-        {}
-
-    public:
         virtual ~task_invoke_t()
         {}
 
@@ -41,8 +24,8 @@ namespace mtbase
     struct task_func_t :
         public task_invoke_t
     {
-        task_func_t(Func func, TupleArgs args) :
-            task_invoke_t{ sizeof(task_func_t), alignof(task_func_t) },
+        task_func_t(Func&& func, TupleArgs&& args) :
+            task_invoke_t{},
             invoked{ func },
             tupled{ args }
         {
@@ -68,10 +51,10 @@ namespace mtbase
         public task_func_t<Method,
         tuple_extend_front_t<FromType* const, TupleArgs>>
     {
-        task_method_t(FromType* const fromObj, Method method, TupleArgs args) :
+        task_method_t(FromType* const fromObj, Method&& method, TupleArgs&& args) :
             task_func_t<Method,
             tuple_extend_front_t<FromType* const, TupleArgs>>
-        { method, std::tuple_cat(std::make_tuple(fromObj), args) }
+        { std::forward<Method>(method), std::tuple_cat(std::make_tuple(fromObj), args) }
         {}
     };
 
@@ -82,11 +65,7 @@ namespace mtbase
         task_t
     {
         task_flush_object_t(object_scheduler* const objectScheduler) :
-            task_t
-        {
-            sizeof(task_flush_object_t),
-            alignof(task_flush_object_t)
-        },
+            task_t{},
             objectSched{ objectScheduler }
         {}
 
