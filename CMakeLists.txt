@@ -12,5 +12,7 @@ project(sentifer VERSION 0.1.0 DESCRIPTION "Kyurenpoto's mono-repo" LANGUAGES CX
 add_subdirectory(projects/sentifer_mtbase)
 
 # submodules
+add_subdirectory(submodule/doctest)
 
 # dependencies
+add_dependencies(sentifer_mtbase doctest)
