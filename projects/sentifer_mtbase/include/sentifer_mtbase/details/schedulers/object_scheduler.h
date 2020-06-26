@@ -20,7 +20,7 @@ namespace mtbase
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
             task_storage* const taskStorage,
-            const scheduler_restriction&& restricts) :
+            const scheduler_restriction& restricts) :
             scheduler{ res },
             flusher{ objectFlushSched },
             storage{ taskStorage },

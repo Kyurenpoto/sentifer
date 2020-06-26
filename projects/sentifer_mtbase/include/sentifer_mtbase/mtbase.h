@@ -5,4 +5,4 @@
 #include "details/schedulers/thread_local_scheduler.h"
 #include "details/schedulers/object_scheduler.h"
 #include "details/schedulers/object_flush_scheduler.h"
-#include "details/schedulers/sized_object_scheduler.hpp"
+#include "details/schedulables/schedulable_object.hpp"
