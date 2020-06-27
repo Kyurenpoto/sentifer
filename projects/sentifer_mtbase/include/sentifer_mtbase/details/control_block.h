@@ -10,21 +10,28 @@ namespace mtbase
 
     struct control_block
     {
-        void reset() noexcept;
-        void release() noexcept;
+        void reset()
+            noexcept;
+        void release()
+            noexcept;
         void recordTickFlushing(
             const steady_tick tickBegin,
             const steady_tick tickEnd)
             noexcept;
-        void recordCountFlushing() noexcept;
-        void recordCountExpired(const scheduler_restriction& restriction) noexcept;
+        void recordCountFlushing()
+            noexcept;
+        void recordCountExpired(const scheduler_restriction& restriction)
+            noexcept;
 
+        [[nodiscard]]
         bool checkTransitionTick(
             const scheduler_restriction& restriction,
             const steady_tick tickEnd)
             const noexcept;
+        [[nodiscard]]
         bool checkTransitionCount(const scheduler_restriction& restriction)
             const noexcept;
+        [[nodiscard]]
         bool checkTransition(
             const scheduler_restriction& restriction,
             const steady_tick tickEnd)

@@ -4,14 +4,16 @@
 
 using namespace mtbase;
 
-void control_block::reset() noexcept
+void control_block::reset()
+    noexcept
 {
     tickBeginOccupying = clock_t::getSteadyTick();
     tickFlushing = steady_tick{};
     cntFlushed = 0;
 }
 
-void control_block::release() noexcept
+void control_block::release()
+    noexcept
 {
     sched = nullptr;
 }
@@ -24,7 +26,8 @@ void control_block::recordTickFlushing(
     tickFlushing += (tickEnd - tickBegin);
 }
 
-void control_block::recordCountFlushing() noexcept
+void control_block::recordCountFlushing()
+    noexcept
 {
     ++cntFlushed;
 }
@@ -36,6 +39,7 @@ void control_block::recordCountExpired(
     cntFlushed = restriction.MAX_FLUSH_COUNT;
 }
 
+[[nodiscard]]
 bool control_block::checkTransitionTick(
     const scheduler_restriction& restriction,
     const steady_tick tickEnd)
@@ -45,6 +49,7 @@ bool control_block::checkTransitionTick(
         tickEnd - tickBeginOccupying > restriction.MAX_OCCUPY_TICK;
 }
 
+[[nodiscard]]
 bool control_block::checkTransitionCount(
     const scheduler_restriction& restriction)
     const noexcept
@@ -52,6 +57,7 @@ bool control_block::checkTransitionCount(
     return cntFlushed >= restriction.MAX_FLUSH_COUNT;
 }
 
+[[nodiscard]]
 bool control_block::checkTransition(
     const scheduler_restriction& restriction,
     const steady_tick tickEnd)

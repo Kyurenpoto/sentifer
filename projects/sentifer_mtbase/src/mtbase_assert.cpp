@@ -2,7 +2,7 @@
 
 #include <cstdlib>
 
-void mtbase::do_assert(bool condition)
+void mtbase::details::do_assert(bool condition)
 {
     if (!condition)
         std::abort();

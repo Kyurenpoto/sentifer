@@ -81,6 +81,7 @@ namespace mtbase
             deallocate_object(p);
         }
 
+        [[nodiscard]]
         std::pmr::memory_resource* resource() const
         {
             return res;
