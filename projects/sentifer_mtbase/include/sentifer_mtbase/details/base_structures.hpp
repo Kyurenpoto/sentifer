@@ -27,23 +27,32 @@ namespace mtbase
 
         struct index_base_t
         {
+            [[nodiscard]]
             index_base_t move(OP op)
                 const noexcept;
+            [[nodiscard]]
             bool isValid(OP op)
                 const noexcept;
+
+            [[nodiscard]]
             size_t getTargetIndex(OP op)
                 const noexcept;
-
+            [[nodiscard]]
             virtual index_base_t pushed_front()
                 const noexcept;
+            [[nodiscard]]
             virtual index_base_t pushed_back()
                 const noexcept;
+            [[nodiscard]]
             virtual index_base_t poped_front()
                 const noexcept;
+            [[nodiscard]] 
             virtual index_base_t poped_back()
                 const noexcept;
+            [[nodiscard]]
             virtual bool isFull()
                 const noexcept;
+            [[nodiscard]]
             virtual bool isEmpty()
                 const noexcept;
 
@@ -63,12 +72,15 @@ namespace mtbase
             };
 
         public:
+            [[nodiscard]]
             descriptor rollbacked(
                 index_base_t* const oldIndexLoad,
                 index_base_t* const newIndexLoad)
                 const noexcept;
+            [[nodiscard]]
             descriptor completed(index_base_t* const oldIndexLoad)
                 const noexcept;
+            [[nodiscard]]
             descriptor failed(index_base_t* const oldIndexLoad)
                 const noexcept;
 
@@ -84,27 +96,38 @@ namespace mtbase
 
     public:
         task_storage(std::pmr::memory_resource* res) :
-            descAllocator{ res }
+            alloc{ res }
         {}
 
         virtual ~task_storage()
         {
-            descAllocator.delete_object(registered.load(std::memory_order_relaxed));
+            delete_index(index.load(std::memory_order_relaxed));
+            alloc.delete_object(registered.load(std::memory_order_relaxed));
         }
 
     public:
+        [[nodiscard]]
         bool push_front(task_t* task);
+        [[nodiscard]]
         bool push_back(task_t* task);
+        [[nodiscard]]
         task_t* pop_front();
+        [[nodiscard]]
         task_t* pop_back();
 
     protected:
+        [[nodiscard]]
         descriptor* createDesc(task_t* task, OP op);
         void destroyDesc(descriptor* const desc);
+        [[nodiscard]]
+        index_base_t* new_index(index_base_t&& idx);
+        void delete_index(index_base_t* const idx);
+        [[nodiscard]]
+        descriptor* new_desc(descriptor&& desc);
+        void delete_desc(descriptor* const desc);
 
+        [[nodiscard]]
         virtual std::atomic<task_t*>& getTask(size_t idx);
-        virtual index_base_t* new_index(index_base_t&& idx);
-        virtual void delete_index(index_base_t* const idx);
 
     private:
         void applyDesc(descriptor*& desc);
@@ -120,10 +143,13 @@ namespace mtbase
             descriptor* const oldDesc,
             descriptor*& desc);
 
+        [[nodiscard]]
         bool tryCommitTask(descriptor* const desc)
             noexcept;
+        [[nodiscard]]
         bool tryCommitIndex(descriptor* const desc)
             noexcept;
+        [[nodiscard]]
         bool tryRegister(
             descriptor*& expected,
             descriptor* const desired)
@@ -134,7 +160,7 @@ namespace mtbase
 
         std::atomic<index_base_t*> index;
         std::atomic<descriptor*> registered{ nullptr };
-        obj_allocator<descriptor> descAllocator;
+        generic_allocator alloc;
     };
 
     template<size_t SIZE>
@@ -148,6 +174,7 @@ namespace mtbase
         struct index_t :
             public index_base_t
         {
+            [[nodiscard]]
             index_t pushed_front()
                 const noexcept override
             {
@@ -158,6 +185,7 @@ namespace mtbase
                 };
             }
 
+            [[nodiscard]]
             index_t pushed_back()
                 const noexcept override
             {
@@ -168,6 +196,7 @@ namespace mtbase
                 };
             }
 
+            [[nodiscard]]
             index_t poped_front()
                 const noexcept override
             {
@@ -178,6 +207,7 @@ namespace mtbase
                 };
             }
 
+            [[nodiscard]]
             index_t poped_back()
                 const noexcept override
             {
@@ -188,12 +218,14 @@ namespace mtbase
                 };
             }
 
+            [[nodiscard]]
             bool isFull()
                 const noexcept override
             {
                 return (front + REAL_SIZE - back) % REAL_SIZE == 1;
             }
 
+            [[nodiscard]]
             bool isEmpty()
                 const noexcept override
             {
@@ -206,35 +238,23 @@ namespace mtbase
             task_storage{ res },
             indexAllocator{ res }
         {
-            index_t* init = new_index();
+            index_t* init = new_index(index_t{});
             index.store(init, std::memory_order_relaxed);
         }
 
         ~task_wait_free_deque()
-        {
-            delete_index(index.load(std::memory_order_relaxed));
-        }
+        {}
 
     protected:
+        [[nodiscard]]
         std::atomic<task_t*>& getTask(size_t idx)
         {
             return tasks[idx];
         }
 
-        index_base_t* new_index(index_base_t&& idx)
-        {
-            indexAllocator.new_object(idx);
-        }
-
-        void delete_index(index_base_t* const idx)
-        {
-            indexAllocator.delete_object(idx);
-        }
-
     private:
         static constexpr size_t REAL_SIZE = SIZE + 2;
 
-        obj_allocator<index_t> indexAllocator;
         std::array<std::atomic<task_t*>, REAL_SIZE> tasks;
     };
 }

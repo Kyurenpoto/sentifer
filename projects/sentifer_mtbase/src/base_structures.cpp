@@ -4,6 +4,7 @@ using namespace mtbase;
 
 #pragma region task_storage__index_base_t
 
+[[nodiscard]]
 task_storage::index_base_t task_storage::index_base_t::move(OP op)
     const noexcept
 {
@@ -22,6 +23,7 @@ task_storage::index_base_t task_storage::index_base_t::move(OP op)
     }
 }
 
+[[nodiscard]]
 bool task_storage::index_base_t::isValid(OP op)
     const noexcept
 {
@@ -41,6 +43,7 @@ bool task_storage::index_base_t::isValid(OP op)
     }
 }
 
+[[nodiscard]]
 size_t task_storage::index_base_t::getTargetIndex(OP op)
     const noexcept
 {
@@ -61,6 +64,7 @@ size_t task_storage::index_base_t::getTargetIndex(OP op)
 
 #pragma region task_storage__descriptor
 
+[[nodiscard]]
 task_storage::descriptor task_storage::descriptor::rollbacked(
     index_base_t* const oldIndexLoad,
     index_base_t* const newIndexLoad)
@@ -77,6 +81,7 @@ task_storage::descriptor task_storage::descriptor::rollbacked(
     };
 }
 
+[[nodiscard]]
 task_storage::descriptor task_storage::descriptor::completed(
     index_base_t* const oldIndexLoad)
     const noexcept
@@ -92,6 +97,7 @@ task_storage::descriptor task_storage::descriptor::completed(
     };
 }
 
+[[nodiscard]]
 task_storage::descriptor task_storage::descriptor::failed(
     index_base_t* const oldIndexLoad)
     const noexcept
@@ -107,7 +113,7 @@ task_storage::descriptor task_storage::descriptor::failed(
     };
 }
 
-#pragma endregion task_storage__index_base_t
+#pragma endregion task_storage__descriptor
 
 template<class T>
 bool tryEfficientCAS(
@@ -122,6 +128,7 @@ bool tryEfficientCAS(
 
 #pragma region task_storage
 
+[[nodiscard]]
 bool task_storage::push_front(task_t* task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_FRONT);
@@ -132,6 +139,7 @@ bool task_storage::push_front(task_t* task)
     return result;
 }
 
+[[nodiscard]]
 bool task_storage::push_back(task_t* task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_BACK);
@@ -142,6 +150,7 @@ bool task_storage::push_back(task_t* task)
     return result;
 }
 
+[[nodiscard]]
 task_t* task_storage::pop_front()
 {
     descriptor* const desc = createDesc(nullptr, OP::POP_FRONT);
@@ -153,6 +162,7 @@ task_t* task_storage::pop_front()
     return result;
 }
 
+[[nodiscard]]
 task_t* task_storage::pop_back()
 {
     descriptor* const desc = createDesc(nullptr, OP::POP_BACK);
@@ -164,6 +174,7 @@ task_t* task_storage::pop_back()
     return result;
 }
 
+[[nodiscard]]
 task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
 {
     index_base_t* const oldIndex = index.load(std::memory_order_acquire);
@@ -173,7 +184,7 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
     index_base_t* const newIndex = new_index(oldIndex->move(op));
     std::atomic<task_t*>& target = getTask(oldIndex->getTargetIndex(op));
 
-    descriptor* desc = descAllocator.new_object(descriptor
+    descriptor* desc = new_desc(descriptor
         {
             .phase = descriptor::PHASE::RESERVE,
             .op = op,
@@ -202,7 +213,29 @@ void task_storage::destroyDesc(descriptor* const desc)
     if (desc->newIndex == curIndex)
         delete_index(desc->newIndex);
 
-    descAllocator.delete_object(desc);
+    delete_desc(desc);
+}
+
+[[nodiscard]]
+task_storage::index_base_t* task_storage::new_index(index_base_t&& idx)
+{
+    return alloc.new_object<index_base_t>(idx);
+}
+
+void task_storage::delete_index(index_base_t* const idx)
+{
+    alloc.delete_object(idx);
+}
+
+[[nodiscard]]
+task_storage::descriptor* task_storage::new_desc(descriptor&& desc)
+{
+    return alloc.new_object<descriptor>(desc);
+}
+
+void task_storage::delete_desc(descriptor* const desc)
+{
+    alloc.delete_object(desc);
 }
 
 void task_storage::applyDesc(descriptor*& desc)
@@ -285,7 +318,7 @@ void task_storage::help_registered_complete(descriptor*& desc)
     while (desc->phase != descriptor::PHASE::COMPLETE)
     {
         descriptor* oldDesc = desc;
-        desc = descAllocator.new_object(
+        desc = new_desc(
             oldDesc->completed(index.load(std::memory_order_acquire)));
         renewRegistered(oldDesc, desc);
     }
@@ -302,10 +335,10 @@ task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
     {
         index_base_t* const newIndex =
             new_index(oldIndex->move(oldDesc->op));
-        desc = descAllocator.new_object(oldDesc->rollbacked(oldIndex, newIndex));
+        desc = new_desc(oldDesc->rollbacked(oldIndex, newIndex));
     }
     else
-        desc = descAllocator.new_object(oldDesc->failed(oldIndex));
+        desc = new_desc(oldDesc->failed(oldIndex));
     return oldDesc;
 }
 
@@ -314,9 +347,9 @@ void task_storage::completeDesc(descriptor*& desc)
     descriptor* const oldDesc = desc;
     delete_index(oldDesc->oldIndex);
 
-    desc = descAllocator.new_object(
+    desc = new_desc(
         oldDesc->completed(index.load(std::memory_order_acquire)));
-    descAllocator.delete_object(oldDesc);
+    delete_desc(oldDesc);
 }
 
 void task_storage::renewRegistered(
@@ -340,6 +373,7 @@ void task_storage::renewRegistered(
     }
 }
 
+[[nodiscard]]
 bool task_storage::tryCommitTask(descriptor* const desc)
     noexcept
 {
@@ -351,6 +385,7 @@ bool task_storage::tryCommitTask(descriptor* const desc)
     return oldTask == desc->newTask;
 }
 
+[[nodiscard]]
 bool task_storage::tryCommitIndex(descriptor* const desc)
     noexcept
 {
@@ -362,6 +397,7 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
     return oldIndex == desc->newIndex;
 }
 
+[[nodiscard]]
 bool task_storage::tryRegister(
     descriptor*& expected,
     descriptor* const desired)

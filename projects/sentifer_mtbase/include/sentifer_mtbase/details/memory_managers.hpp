@@ -89,25 +89,4 @@ namespace mtbase
     private:
         std::pmr::memory_resource* res;
     };
-
-    template<class T>
-    struct obj_allocator :
-        public generic_allocator
-    {
-        obj_allocator(std::pmr::memory_resource* r) :
-            generic_allocator{ r }
-        {}
-
-    public:
-        template<class... Args>
-        [[nodiscard]] T* new_object(Args&&... args)
-        {
-            return generic_allocator::new_object<T>(std::forward<Args>(args)...);
-        }
-
-        void delete_object(T* p)
-        {
-            generic_allocator::delete_object(not_null<T*>{ p }.get());
-        }
-    };
 }
