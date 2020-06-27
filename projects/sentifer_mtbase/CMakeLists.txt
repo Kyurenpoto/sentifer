@@ -14,6 +14,7 @@ add_library(sentifer_mtbase STATIC
 	"src/object_scheduler.cpp"
 	"src/object_flush_scheduler.cpp"
 	"src/tasks.cpp"
+	"src/base_structures.cpp"
 )
 target_compile_features(sentifer_mtbase PUBLIC cxx_std_20)
 

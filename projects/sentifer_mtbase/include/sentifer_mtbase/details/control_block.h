@@ -1,12 +1,12 @@
 #pragma once
 
 #include "clocks.hpp"
-#include "scheduler_restriction.h"
 
 namespace mtbase
 {
     struct scheduler;
     struct thread_local_scheduler;
+    struct scheduler_restriction;
 
     struct control_block
     {

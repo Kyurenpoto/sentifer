@@ -1,5 +1,7 @@
 #include "../include/sentifer_mtbase/details/control_block.h"
 
+#include "../include/sentifer_mtbase/details/scheduler_restriction.h"
+
 using namespace mtbase;
 
 void control_block::reset() noexcept

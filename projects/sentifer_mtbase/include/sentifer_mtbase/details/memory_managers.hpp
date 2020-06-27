@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <memory_resource>
 
 #include "type_utils.hpp"
