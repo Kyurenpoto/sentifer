@@ -25,6 +25,14 @@ namespace mtbase
                 std::forward_as_tuple(std::forward<Args>(args)...)));
         }
 
+        template<class Func, class... Args>
+        void registerFuncTaskCuttingIn(Func&& func, Args&&... args)
+        {
+            registerTaskCuttingInImpl(alloc.new_func_task(
+                std::forward<Func>(func),
+                std::forward_as_tuple(std::forward<Args>(args)...)));
+        }
+
         template<class T, class Method, class... Args>
         void registerMethodTask(T* const fromObj, Method&& method, Args&&... args)
         {
@@ -33,13 +41,21 @@ namespace mtbase
                 std::forward_as_tuple(std::forward<Args>(args)...)));
         }
 
+        template<class T, class Method, class... Args>
+        void registerMethodTaskCuttingIn(T* const fromObj, Method&& method, Args&&... args)
+        {
+            registerTaskCuttingInImpl(alloc.new_method_task(
+                fromObj, std::forward<Method>(method),
+                std::forward_as_tuple(std::forward<Args>(args)...)));
+        }
+
     protected:
-        virtual void registerTaskImpl(task_t* const task)
+        virtual void registerTaskImpl(task_invoke_t* const task)
         {
             alloc.delete_task(task);
         }
 
-        virtual void registerTaskImpl(task_invoke_t* const task)
+        virtual void registerTaskCuttingInImpl(task_invoke_t* const task)
         {
             alloc.delete_task(task);
         }

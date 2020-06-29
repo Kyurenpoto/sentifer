@@ -25,6 +25,14 @@ void object_scheduler::registerTaskImpl(task_invoke_t* const task)
     }
 }
 
+void object_scheduler::registerTaskCuttingInImpl(task_invoke_t* const task)
+{
+    if (!storage->push_front(task))
+    {
+        alloc.delete_task(task);
+    }
+}
+
 void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
 {
     const steady_tick tickBegin = clock_t::getSteadyTick();

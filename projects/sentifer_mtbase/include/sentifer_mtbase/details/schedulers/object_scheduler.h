@@ -32,6 +32,7 @@ namespace mtbase
 
     protected:
         void registerTaskImpl(task_invoke_t* const task) override;
+        void registerTaskCuttingInImpl(task_invoke_t* const task) override;
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);

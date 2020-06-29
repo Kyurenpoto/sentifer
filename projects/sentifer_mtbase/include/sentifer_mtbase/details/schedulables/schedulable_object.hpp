@@ -31,12 +31,20 @@ namespace mtbase
         template<class Func, class... Args>
         void scheduleFunc(
             Func&& func,
-            Args&&... args);
+            Args&&... args)
+        {
+            sched->registerFuncTask(
+                std::forward<Func>(func), std::forward<Args>(args)...);
+        }
 
         template<class Func, class... Args>
         void scheduleFuncCuttingIn(
             Func&& func,
-            Args&&... args);
+            Args&&... args)
+        {
+            sched->registerFuncTaskCuttingIn(
+                std::forward<Func>(func), std::forward<Args>(args)...);
+        }
 
         template<class Func, class... Args>
         void scheduleFuncAfter(
@@ -54,13 +62,21 @@ namespace mtbase
         void scheduleMethod(
             T* const fromObj,
             Method&& method,
-            Args&&... args);
+            Args&&... args)
+        {
+            sched->registerMethodTask(fromObj,
+                std::forward<Method>(method), std::forward<Args>(args)...);
+        }
 
         template<class T, class Method, class... Args>
         void scheduleMethodCuttingIn(
             T* const fromObj,
             Method&& method,
-            Args&&... args);
+            Args&&... args)
+        {
+            sched->registerMethodTaskCuttingIn(fromObj,
+                std::forward<Method>(method), std::forward<Args>(args)...);
+        }
 
         template<class T, class Method, class... Args>
         void scheduleMethodAfter(
