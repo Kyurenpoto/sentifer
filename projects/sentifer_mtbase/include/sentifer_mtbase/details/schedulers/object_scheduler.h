@@ -9,7 +9,6 @@ namespace mtbase
     struct object_flush_scheduler;
     struct thread_local_scheduler;
     struct control_block;
-    struct task_storage;
 
     struct object_scheduler :
         public invocable_scheduler
@@ -39,8 +38,14 @@ namespace mtbase
         void flushTasks(control_block& block);
         void executeTask(control_block& block);
 
-        void invokeTask(control_block& block, task_t* const task) const;
-        void invokeTask(control_block& block, task_invoke_t* const task) const;
+        void invokeTask(
+            control_block& block,
+            task_t* const task)
+            const;
+        void invokeTask(
+            control_block& block,
+            task_invoke_t* const task)
+            const;
 
         bool tryOwn() noexcept;
         void release() noexcept;

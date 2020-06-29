@@ -9,7 +9,6 @@ namespace mtbase
 {
     struct thread_local_scheduler;
     struct control_block;
-    struct task_storage;
 
     struct object_flush_scheduler final :
         public scheduler
@@ -37,9 +36,13 @@ namespace mtbase
         void executeTask(control_block& block);
 
         void invokeTask(
-            control_block& block, task_t* const task) const;
+            control_block& block,
+            task_t* const task)
+            const;
         void invokeTask(
-            control_block& block, task_flush_object_t* const task) const;
+            control_block& block,
+            task_flush_object_t* const task)
+            const;
 
     private:
         const scheduler_restriction restriction;
