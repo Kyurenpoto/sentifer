@@ -7,6 +7,8 @@
 
 namespace mtbase
 {
+    struct task_transaction_t;
+
     template<size_t MAX_STORAGE_SIZE = (1 << 20)>
     struct schedulable_object
     {
@@ -73,6 +75,8 @@ namespace mtbase
             T* const fromObj,
             Method&& method,
             Args&&... args);
+
+        bool tryTransferAuthority(task_transaction_t* const task);
 
     private:
         generic_allocator alloc;
