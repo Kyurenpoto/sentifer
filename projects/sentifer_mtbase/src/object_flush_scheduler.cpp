@@ -6,6 +6,11 @@
 
 using namespace mtbase;
 
+void object_flush_scheduler::registerFlushObjectTask(object_scheduler* const objectSched)
+{
+    registerTaskImpl(alloc.new_flush_object_task(objectSched));
+}
+
 void object_flush_scheduler::flush(thread_local_scheduler& threadSched)
 {
     control_block& block = threadSched.getControlBlock(this);
@@ -22,7 +27,7 @@ void object_flush_scheduler::registerTaskImpl(task_flush_object_t* const task)
 {
     if (!storage->push_back(task))
     {
-        destroyTask(task);
+        alloc.delete_task(task);
     }
 }
 
@@ -46,7 +51,7 @@ void object_flush_scheduler::executeTask(control_block& block)
     }
 
     invokeTask(block, task);
-    destroyTask(task);
+    alloc.delete_task(task);
 }
 
 void object_flush_scheduler::invokeTask(

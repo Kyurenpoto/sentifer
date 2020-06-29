@@ -21,7 +21,7 @@ void object_scheduler::registerTaskImpl(task_invoke_t* const task)
 {
     if (!storage->push_back(task))
     {
-        destroyTask(task);
+        alloc.delete_task(task);
     }
 }
 
@@ -68,7 +68,7 @@ void object_scheduler::executeTask(control_block& block)
     }
 
     invokeTask(block, task);
-    destroyTask(task);
+    alloc.delete_task(task);
 }
 
 void object_scheduler::invokeTask(

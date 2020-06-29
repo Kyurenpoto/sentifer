@@ -26,10 +26,11 @@ namespace mtbase
         {}
 
     public:
+        void registerFlushObjectTask(object_scheduler* const objectSched);
         void flush(thread_local_scheduler& threadSched);
 
     protected:
-        void registerTaskImpl(task_flush_object_t* const task) override;
+        void registerTaskImpl(task_flush_object_t* const task);
 
     private:
         void flushTasks(control_block& block);

@@ -36,12 +36,12 @@ namespace mtbase
     protected:
         virtual void registerTaskImpl(task_t* const task)
         {
-            destroyTask(task);
+            alloc.delete_task(task);
         }
 
         virtual void registerTaskImpl(task_invoke_t* const task)
         {
-            destroyTask(task);
+            alloc.delete_task(task);
         }
     };
 }
