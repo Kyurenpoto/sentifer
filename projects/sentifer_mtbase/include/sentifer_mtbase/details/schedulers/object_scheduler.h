@@ -21,9 +21,8 @@ namespace mtbase
             object_flush_scheduler& objectFlushSched,
             task_storage* const taskStorage,
             const scheduler_restriction& restricts) :
-            scheduler{ res },
+            scheduler{ res, taskStorage },
             flusher{ objectFlushSched },
-            storage{ taskStorage },
             restriction{ restricts }
         {}
 
@@ -50,7 +49,6 @@ namespace mtbase
     private:
         std::atomic_bool isOwned{ false };
         object_flush_scheduler& flusher;
-        task_storage* const storage;
         const scheduler_restriction restriction;
     };
 }

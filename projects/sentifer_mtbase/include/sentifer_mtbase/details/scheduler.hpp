@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <memory_resource>
 
 #include "task_allocator.hpp"
@@ -12,8 +11,11 @@ namespace mtbase
 
     struct scheduler
     {
-        scheduler(std::pmr::memory_resource* const res) :
-            alloc{ res }
+        scheduler(
+            std::pmr::memory_resource* const res,
+            task_storage* const taskStorage) :
+            alloc{ res },
+            storage{ taskStorage }
         {}
 
         virtual ~scheduler()
@@ -61,6 +63,9 @@ namespace mtbase
         {
             destroyTask(task);
         }
+
+    protected:
+        task_storage* const storage;
 
     private:
         task_allocator alloc;

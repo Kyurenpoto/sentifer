@@ -18,8 +18,7 @@ namespace mtbase
             std::pmr::memory_resource* const res,
             task_storage* const taskStorage,
             const scheduler_restriction&& restricts) :
-            scheduler{ res },
-            storage{ taskStorage },
+            scheduler{ res, taskStorage },
             restriction{ restricts }
         {}
 
@@ -42,7 +41,6 @@ namespace mtbase
             control_block& block, task_flush_object_t* const task) const;
 
     private:
-        task_storage* const storage;
         const scheduler_restriction restriction;
     };
 }
