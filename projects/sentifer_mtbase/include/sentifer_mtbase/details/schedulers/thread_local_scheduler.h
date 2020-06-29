@@ -1,13 +1,13 @@
 #pragma once
 
-#include "../scheduler.hpp"
+#include "invocable_scheduler.h"
 
 namespace mtbase
 {
     struct control_block;
 
     struct thread_local_scheduler final :
-        public scheduler
+        public invocable_scheduler
     {
         control_block& getControlBlock(const scheduler* const) noexcept;
 

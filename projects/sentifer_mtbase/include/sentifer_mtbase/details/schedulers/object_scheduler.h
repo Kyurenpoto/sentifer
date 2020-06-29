@@ -1,10 +1,8 @@
 #pragma once
 
-#include <memory_resource>
-
 #include "../clocks.hpp"
-#include "../scheduler.hpp"
 #include "../scheduler_restriction.h"
+#include "invocable_scheduler.h"
 
 namespace mtbase
 {
@@ -14,14 +12,14 @@ namespace mtbase
     struct task_storage;
 
     struct object_scheduler :
-        public scheduler
+        public invocable_scheduler
     {
         object_scheduler(
             std::pmr::memory_resource* const res,
             object_flush_scheduler& objectFlushSched,
             task_storage* const taskStorage,
             const scheduler_restriction& restricts) :
-            scheduler{ res, taskStorage },
+            invocable_scheduler{ res, taskStorage },
             flusher{ objectFlushSched },
             restriction{ restricts }
         {}

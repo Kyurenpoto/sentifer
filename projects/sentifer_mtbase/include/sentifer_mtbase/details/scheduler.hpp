@@ -1,7 +1,5 @@
 #pragma once
 
-#include <memory_resource>
-
 #include "task_allocator.hpp"
 
 namespace mtbase
@@ -22,22 +20,6 @@ namespace mtbase
         {}
 
     public:
-        template<class Func, class... Args>
-        void registerFuncTask(Func&& func, Args&&... args)
-        {
-            registerTaskImpl(alloc.new_func_task(
-                std::forward<Func>(func),
-                std::forward_as_tuple(std::forward<Args>(args)...)));
-        }
-
-        template<class T, class Method, class... Args>
-        void registerMethodTask(T* const fromObj, Method&& method, Args&&... args)
-        {
-            registerTaskImpl(alloc.new_method_task(
-                fromObj, std::forward<Method>(method),
-                std::forward_as_tuple(std::forward<Args>(args)...)));
-        }
-
         void registerFlushObjectTask(object_scheduler* const objectSched)
         {
             registerTaskImpl(alloc.new_flush_object_task(objectSched));
@@ -54,11 +36,6 @@ namespace mtbase
             destroyTask(task);
         }
 
-        virtual void registerTaskImpl(task_invoke_t* const task)
-        {
-            destroyTask(task);
-        }
-
         virtual void registerTaskImpl(task_flush_object_t* const task)
         {
             destroyTask(task);
@@ -66,8 +43,6 @@ namespace mtbase
 
     protected:
         task_storage* const storage;
-
-    private:
         task_allocator alloc;
     };
 }
