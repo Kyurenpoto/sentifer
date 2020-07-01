@@ -57,7 +57,9 @@ namespace mtbase
                 std::forward<Method>(method),
                 std::tuple_cat(std::make_tuple(fromObj), args)
             }
-        {}
+        {
+            static_assert(std::is_member_function_pointer_v<Method>);
+        }
     };
 
     struct thread_local_scheduler;
