@@ -1,6 +1,5 @@
 #include "../include/sentifer_mtbase/details/tasks.hpp"
 
-#include "../include/sentifer_mtbase/details/schedulers/thread_local_scheduler.h"
 #include "../include/sentifer_mtbase/details/schedulers/object_scheduler.h"
 
 using namespace mtbase;

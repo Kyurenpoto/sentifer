@@ -40,7 +40,7 @@ void control_block::recordCountExpired(
 }
 
 [[nodiscard]]
-bool control_block::checkTransitionTick(
+bool control_block::checkExpiredTick(
     const scheduler_restriction& restriction,
     const steady_tick tickEnd)
     const noexcept
@@ -50,7 +50,7 @@ bool control_block::checkTransitionTick(
 }
 
 [[nodiscard]]
-bool control_block::checkTransitionCount(
+bool control_block::checkExpiredCount(
     const scheduler_restriction& restriction)
     const noexcept
 {
@@ -58,11 +58,11 @@ bool control_block::checkTransitionCount(
 }
 
 [[nodiscard]]
-bool control_block::checkTransition(
+bool control_block::checkExpired(
     const scheduler_restriction& restriction,
     const steady_tick tickEnd)
     const noexcept
 {
-    return checkTransitionCount(restriction) ||
-        checkTransitionTick(restriction, tickEnd);
+    return checkExpiredCount(restriction) ||
+        checkExpiredTick(restriction, tickEnd);
 }

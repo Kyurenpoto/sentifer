@@ -24,15 +24,15 @@ namespace mtbase
             noexcept;
 
         [[nodiscard]]
-        bool checkTransitionTick(
+        bool checkExpiredTick(
             const scheduler_restriction& restriction,
             const steady_tick tickEnd)
             const noexcept;
         [[nodiscard]]
-        bool checkTransitionCount(const scheduler_restriction& restriction)
+        bool checkExpiredCount(const scheduler_restriction& restriction)
             const noexcept;
         [[nodiscard]]
-        bool checkTransition(
+        bool checkExpired(
             const scheduler_restriction& restriction,
             const steady_tick tickEnd)
             const noexcept;

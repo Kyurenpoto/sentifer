@@ -35,7 +35,7 @@ void object_flush_scheduler::flushTasks(control_block& block)
 {
     for (size_t i = 0;
         i < restriction.MAX_FLUSH_COUNT_AT_ONCE &&
-        !block.checkTransitionCount(restriction);
+        !block.checkExpiredCount(restriction);
         ++i)
         executeTask(block);
 }

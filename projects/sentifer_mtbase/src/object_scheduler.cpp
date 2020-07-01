@@ -44,7 +44,7 @@ void object_scheduler::flushOwned(thread_local_scheduler& threadSched)
     
     block.recordTickFlushing(tickBegin, tickEnd);
 
-    if (block.checkTransition(restriction, tickEnd))
+    if (block.checkExpired(restriction, tickEnd))
     {
         block.release();
         release();
@@ -60,7 +60,7 @@ void object_scheduler::flushTasks(control_block& block)
 {
     for (size_t i = 0;
         i < restriction.MAX_FLUSH_COUNT_AT_ONCE &&
-        !block.checkTransitionCount(restriction);
+        !block.checkExpiredCount(restriction);
         ++i)
         executeTask(block);
 }
