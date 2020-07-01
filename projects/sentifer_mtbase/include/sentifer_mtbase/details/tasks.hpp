@@ -1,6 +1,7 @@
 #pragma once
 
 #include "type_utils.hpp"
+#include "clocks.hpp"
 
 namespace mtbase
 {
@@ -66,11 +67,11 @@ namespace mtbase
     struct object_scheduler;
 
     struct task_flush_object_t :
-        task_t
+        public task_t
     {
-        task_flush_object_t(object_scheduler* const objectScheduler) :
+        task_flush_object_t(object_scheduler* const sched) :
             task_t{},
-            objectSched{ objectScheduler }
+            objectSched{ sched }
         {}
 
     public:
@@ -78,5 +79,29 @@ namespace mtbase
 
     private:
         object_scheduler* const objectSched;
+    };
+
+    struct task_timed_invoke_t :
+        public task_t
+    {
+        const steady_tick tickExpiredAt{ steady_tick{} };
+        task_invoke_t* const targetTask{ nullptr };
+    };
+
+    struct timed_object_scheduler;
+
+    struct task_flush_timed_object_t :
+        public task_t
+    {
+        task_flush_timed_object_t(timed_object_scheduler* const sched) :
+            task_t{},
+            timedObjectSched{ sched }
+        {}
+
+    public:
+        void invoke(thread_local_scheduler& threadSched);
+
+    private:
+        timed_object_scheduler* const timedObjectSched;
     };
 }
