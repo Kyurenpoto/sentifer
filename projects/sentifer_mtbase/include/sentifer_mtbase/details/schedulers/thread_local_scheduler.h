@@ -32,6 +32,8 @@ namespace mtbase
             override;
 
     private:
+        void flushRequested();
+
         void invokeTask(task_t* const task)
             const;
         void invokeTask(task_invoke_t* const task)
