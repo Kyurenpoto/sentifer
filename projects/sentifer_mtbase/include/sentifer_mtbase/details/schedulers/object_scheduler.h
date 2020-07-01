@@ -30,8 +30,10 @@ namespace mtbase
         void flush(thread_local_scheduler& threadSched);
 
     protected:
-        void registerTaskImpl(task_invoke_t* const task) override;
-        void registerTaskCuttingInImpl(task_invoke_t* const task) override;
+        void registerTaskImpl(task_invoke_t* const task)
+            override;
+        void registerTaskCuttingInImpl(task_invoke_t* const task)
+            override;
 
     private:
         void flushOwned(thread_local_scheduler& threadSched);
@@ -47,8 +49,10 @@ namespace mtbase
             task_invoke_t* const task)
             const;
 
-        bool tryOwn() noexcept;
-        void release() noexcept;
+        bool tryOwn()
+            noexcept;
+        void release()
+            noexcept;
 
     private:
         std::atomic_bool isOwned{ false };
