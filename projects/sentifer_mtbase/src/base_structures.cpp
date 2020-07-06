@@ -109,6 +109,16 @@ bool tryEfficientCAS(
         std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
+bool tryEfficientCAS(
+    std::atomic_bool& target,
+    bool& expected,
+    bool const desired)
+    noexcept
+{
+    return target.compare_exchange_strong(expected, desired,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 #pragma region task_storage
 
 [[nodiscard]]
@@ -180,6 +190,8 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
 
     applyDesc(desc);
 
+    releaseProgress(desc);
+
     return desc;
 }
 
@@ -236,6 +248,9 @@ void task_storage::applyDesc(descriptor*& desc)
 
 bool task_storage::fast_path(descriptor*& desc)
 {
+    if (!trySetProgress(desc))
+        return false;
+
     if (!tryCommitTask(desc))
         return false;
 
@@ -255,9 +270,13 @@ bool task_storage::fast_path(descriptor*& desc)
 void task_storage::slow_path(descriptor*& desc)
 {
     descriptor* oldDesc = nullptr;
+    bool progress = false;
     while (true)
     {
-        if (tryRegister(oldDesc, desc))
+        if (!progress)
+            progress = trySetProgress(desc);
+
+        if (progress && tryRegister(oldDesc, desc))
             break;
 
         if (oldDesc == nullptr)
@@ -353,6 +372,39 @@ void task_storage::renewRegistered(
         destroyDesc(newDesc);
 
         desc = curDesc;
+    }
+}
+
+[[nodiscard]]
+bool task_storage::trySetProgress(descriptor* const desc)
+    noexcept
+{
+    std::atomic_bool& target = getTargetProgress(desc->op);
+    bool oldTarget = false;
+
+    return tryEfficientCAS(target, oldTarget, true);
+}
+
+void task_storage::releaseProgress(descriptor* const desc)
+    noexcept
+{
+    getTargetProgress(desc->op)
+        .store(false, std::memory_order_release);
+}
+
+[[nodiscard]]
+std::atomic_bool& task_storage::getTargetProgress(const OP op)
+    noexcept
+{
+    switch (op)
+    {
+    case OP::PUSH_FRONT:
+    case OP::POP_FRONT:
+        return progressFront;
+    case OP::PUSH_BACK:
+    case OP::POP_BACK:
+    default:
+        return progressBack;
     }
 }
 

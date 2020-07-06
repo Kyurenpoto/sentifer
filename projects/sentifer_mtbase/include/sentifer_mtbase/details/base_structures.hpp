@@ -19,6 +19,7 @@ namespace mtbase
         enum class OP :
             size_t
         {
+            NONE,
             PUSH_FRONT,
             PUSH_BACK,
             POP_FRONT,
@@ -144,6 +145,14 @@ namespace mtbase
             descriptor*& desc);
 
         [[nodiscard]]
+        bool trySetProgress(descriptor* const desc)
+            noexcept;
+        void releaseProgress(descriptor* const desc)
+            noexcept;
+        [[nodiscard]]
+        std::atomic_bool& getTargetProgress(const OP op)
+            noexcept;
+        [[nodiscard]]
         bool tryCommitTask(descriptor* const desc)
             noexcept;
         [[nodiscard]]
@@ -156,10 +165,12 @@ namespace mtbase
             noexcept;
 
     private:
-        static constexpr size_t MAX_RETRY = 3;
+        static constexpr size_t MAX_RETRY = 4;
 
         std::atomic<index_base_t*> index;
         std::atomic<descriptor*> registered{ nullptr };
+        std::atomic_bool progressFront{ false };
+        std::atomic_bool progressBack{ false };
         generic_allocator alloc;
     };
 
