@@ -43,23 +43,6 @@ bool task_storage::index_base_t::isValid(OP op)
     }
 }
 
-[[nodiscard]]
-size_t task_storage::index_base_t::getTargetIndex(OP op)
-    const noexcept
-{
-    switch (op)
-    {
-    case OP::PUSH_FRONT:
-    case OP::PUSH_BACK:
-        return front;
-    case OP::POP_FRONT:
-    case OP::POP_BACK:
-        return back;
-    default:
-        return 0;
-    }
-}
-
 #pragma endregion task_storage__index_base_t
 
 #pragma region task_storage__descriptor

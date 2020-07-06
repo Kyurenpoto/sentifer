@@ -35,7 +35,7 @@ namespace mtbase
                 const noexcept;
 
             [[nodiscard]]
-            size_t getTargetIndex(OP op)
+            virtual size_t getTargetIndex(OP op)
                 const noexcept;
             [[nodiscard]]
             virtual index_base_t pushed_front()
@@ -174,6 +174,25 @@ namespace mtbase
         struct index_t :
             public index_base_t
         {
+            [[nodiscard]]
+            size_t getTargetIndex(OP op)
+                const noexcept override
+            {
+                switch (op)
+                {
+                case OP::PUSH_FRONT:
+                    return front;
+                case OP::PUSH_BACK:
+                    return back;
+                case OP::POP_FRONT:
+                    return (front + 1) % REAL_SIZE;
+                case OP::POP_BACK:
+                    return (back + REAL_SIZE - 1) % REAL_SIZE;
+                default:
+                    return 0;
+                }
+            }
+
             [[nodiscard]]
             index_t pushed_front()
                 const noexcept override
