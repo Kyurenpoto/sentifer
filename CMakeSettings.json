@@ -12,7 +12,10 @@
       "ctestCommandArgs": "",
       "cmakeExecutable": "C:/Program Files/CMake/bin/cmake.exe",
       "intelliSenseMode": "windows-msvc-x64",
-      "variables": []
+      "variables": [],
+      "enableMicrosoftCodeAnalysis": true,
+      "enableClangTidyCodeAnalysis": true,
+      "clangTidyChecks": "cppcoreguidelines-*, modernize-*, performance-*, portablility-*, readability-*"
     }
   ]
 }
