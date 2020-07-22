@@ -1,3 +1,6 @@
 [submodule "submodule/doctest"]
 	path = submodule/doctest
 	url = https://github.com/onqtam/doctest.git
+[submodule "submodule/fmt"]
+	path = submodule/fmt
+	url = https://github.com/fmtlib/fmt.git

@@ -13,6 +13,8 @@ add_subdirectory(projects/sentifer_mtbase)
 
 # submodules
 add_subdirectory(submodule/doctest)
+add_subdirectory(submodule/fmt)
 
 # dependencies
 add_dependencies(sentifer_mtbase doctest)
+add_dependencies(sentifer_mtbase fmt)
