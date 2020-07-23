@@ -4,6 +4,9 @@
 
 #include "sentifer_mtbase/mtbase.h"
 
+mtbase::task_t task[1'000'000];
+mtbase::task_wait_free_deque<1'000'000> deq{ std::pmr::get_default_resource() };
+
 void warmup()
 {
     int x = 0x12345678;
@@ -17,9 +20,6 @@ int main()
     fmt::print("Warm up process...\n");
     warmup();
     fmt::print("Warm up complete\n");
-
-    mtbase::task_t task[1'000'000];
-    mtbase::task_wait_free_deque<1'000'000> deq{ std::pmr::get_default_resource() };
 
     fmt::print("1 thread only push_back task...\n");
 

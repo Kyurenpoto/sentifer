@@ -26,38 +26,8 @@ namespace mtbase
             POP_BACK
         };
 
-        struct index_base_t
+        struct index_t
         {
-            [[nodiscard]]
-            index_base_t move(OP op)
-                const noexcept;
-            [[nodiscard]]
-            bool isValid(OP op)
-                const noexcept;
-
-            [[nodiscard]]
-            virtual size_t getTargetIndex(OP op)
-                const noexcept;
-            [[nodiscard]]
-            virtual index_base_t pushed_front()
-                const noexcept;
-            [[nodiscard]]
-            virtual index_base_t pushed_back()
-                const noexcept;
-            [[nodiscard]]
-            virtual index_base_t poped_front()
-                const noexcept;
-            [[nodiscard]] 
-            virtual index_base_t poped_back()
-                const noexcept;
-            [[nodiscard]]
-            virtual bool isFull()
-                const noexcept;
-            [[nodiscard]]
-            virtual bool isEmpty()
-                const noexcept;
-
-        public:
             const size_t front = 0;
             const size_t back = 1;
         };
@@ -75,14 +45,14 @@ namespace mtbase
         public:
             [[nodiscard]]
             descriptor rollbacked(
-                index_base_t* const oldIndexLoad,
-                index_base_t* const newIndexLoad)
+                index_t* const oldIndexLoad,
+                index_t* const newIndexLoad)
                 const noexcept;
             [[nodiscard]]
-            descriptor completed(index_base_t* const oldIndexLoad)
+            descriptor completed(index_t* const oldIndexLoad)
                 const noexcept;
             [[nodiscard]]
-            descriptor failed(index_base_t* const oldIndexLoad)
+            descriptor failed(index_t* const oldIndexLoad)
                 const noexcept;
 
         public:
@@ -91,19 +61,24 @@ namespace mtbase
             std::atomic<task_t*>& target;
             task_t* const oldTask = nullptr;
             task_t* const newTask = nullptr;
-            index_base_t* const oldIndex = nullptr;
-            index_base_t* const newIndex = nullptr;
+            index_t* const oldIndex = nullptr;
+            index_t* const newIndex = nullptr;
         };
 
     public:
         task_storage(std::pmr::memory_resource* res) :
             alloc{ res }
-        {}
+        {
+            index_t* init = new_index(index_t{});
+            index.store(init, std::memory_order_relaxed);
+        }
 
         virtual ~task_storage()
         {
             delete_index(index.load(std::memory_order_relaxed));
-            alloc.delete_object(registered.load(std::memory_order_relaxed));
+
+            if (registered != nullptr)
+                delete_desc(registered.load(std::memory_order_relaxed));
         }
 
     public:
@@ -121,14 +96,23 @@ namespace mtbase
         descriptor* createDesc(task_t* task, OP op);
         void destroyDesc(descriptor* const desc);
         [[nodiscard]]
-        index_base_t* new_index(index_base_t&& idx);
-        void delete_index(index_base_t* const idx);
+        index_t* new_index(index_t&& idx);
+        void delete_index(index_t* const idx);
         [[nodiscard]]
         descriptor* new_desc(descriptor&& desc);
         void delete_desc(descriptor* const desc);
 
         [[nodiscard]]
-        virtual std::atomic<task_t*>& getTask(size_t idx);
+        virtual index_t moveIndex(index_t* const origin, OP op)
+            const noexcept = 0;
+        [[nodiscard]]
+        virtual size_t getTargetIndex(index_t* const idx, OP op)
+            const noexcept = 0;
+        [[nodiscard]]
+        virtual bool isValidIndex(index_t* const idx, OP op)
+            const noexcept = 0;
+        [[nodiscard]]
+        virtual std::atomic<task_t*>& getTask(size_t idx) = 0;
 
     private:
         void applyDesc(descriptor*& desc);
@@ -167,7 +151,7 @@ namespace mtbase
     private:
         static constexpr size_t MAX_RETRY = 4;
 
-        std::atomic<index_base_t*> index;
+        std::atomic<index_t*> index;
         std::atomic<descriptor*> registered{ nullptr };
         std::atomic_bool progressFront{ false };
         std::atomic_bool progressBack{ false };
@@ -181,103 +165,92 @@ namespace mtbase
         static_assert(SIZE >= BASE_ALIGN * 8);
         static_assert(SIZE <= 0xFFFF'FFFD);
 
-    private:
-        struct index_t :
-            public index_base_t
-        {
-            [[nodiscard]]
-            size_t getTargetIndex(OP op)
-                const noexcept override
-            {
-                switch (op)
-                {
-                case OP::PUSH_FRONT:
-                    return front;
-                case OP::PUSH_BACK:
-                    return back;
-                case OP::POP_FRONT:
-                    return (front + 1) % REAL_SIZE;
-                case OP::POP_BACK:
-                    return (back + REAL_SIZE - 1) % REAL_SIZE;
-                default:
-                    return 0;
-                }
-            }
-
-            [[nodiscard]]
-            index_t pushed_front()
-                const noexcept override
-            {
-                return index_t
-                {
-                    .front = (front + REAL_SIZE - 1) % REAL_SIZE,
-                    .back = back
-                };
-            }
-
-            [[nodiscard]]
-            index_t pushed_back()
-                const noexcept override
-            {
-                return index_t
-                {
-                    .front = front,
-                    .back = (back + 1) % REAL_SIZE
-                };
-            }
-
-            [[nodiscard]]
-            index_t poped_front()
-                const noexcept override
-            {
-                return index_t
-                {
-                    .front = (front + 1) % REAL_SIZE,
-                    .back = back
-                };
-            }
-
-            [[nodiscard]]
-            index_t poped_back()
-                const noexcept override
-            {
-                return index_t
-                {
-                    .front = front,
-                    .back = (back + REAL_SIZE - 1) % REAL_SIZE
-                };
-            }
-
-            [[nodiscard]]
-            bool isFull()
-                const noexcept override
-            {
-                return (front + REAL_SIZE - back) % REAL_SIZE == 1;
-            }
-
-            [[nodiscard]]
-            bool isEmpty()
-                const noexcept override
-            {
-                return (back + REAL_SIZE - front) % REAL_SIZE == 1;
-            }
-        };
-
     public:
         task_wait_free_deque(std::pmr::memory_resource* res) :
-            task_storage{ res },
-            indexAllocator{ res }
-        {
-            index_t* init = new_index(index_t{});
-            index.store(init, std::memory_order_relaxed);
-        }
+            task_storage{ res }
+        {}
 
         ~task_wait_free_deque()
         {}
 
     protected:
         [[nodiscard]]
+        index_t moveIndex(index_t* const origin, OP op)
+            const noexcept override
+        {
+            switch (op)
+            {
+            case OP::PUSH_FRONT:
+                return index_t
+                {
+                    .front = (origin->front + REAL_SIZE - 1) % REAL_SIZE,
+                    .back = origin->back
+                };
+            case OP::PUSH_BACK:
+                return index_t
+                {
+                    .front = origin->front,
+                    .back = (origin->back + 1) % REAL_SIZE
+                };
+            case OP::POP_FRONT:
+                return index_t
+                {
+                    .front = (origin->front + 1) % REAL_SIZE,
+                    .back = origin->back
+                };
+            case OP::POP_BACK:
+                return index_t
+                {
+                    .front = origin->front,
+                    .back = (origin->back + REAL_SIZE - 1) % REAL_SIZE
+                };
+            default:
+                return index_t{};
+            }
+        }
+
+        [[nodiscard]]
+        size_t getTargetIndex(index_t* const idx, OP op)
+            const noexcept override
+        {
+            switch (op)
+            {
+            case OP::PUSH_FRONT:
+                return idx->front;
+            case OP::PUSH_BACK:
+                return idx->back;
+            case OP::POP_FRONT:
+                return (idx->front + 1) % REAL_SIZE;
+            case OP::POP_BACK:
+                return (idx->back + REAL_SIZE - 1) % REAL_SIZE;
+            default:
+                return 0;
+            }
+        }
+
+        [[nodiscard]]
+        bool isValidIndex(index_t* const idx, OP op)
+            const noexcept override
+        {
+            if (idx->front == idx->back)
+                return false;
+
+            switch (op)
+            {
+            case OP::PUSH_FRONT:
+            case OP::POP_BACK:
+                return (idx->back + REAL_SIZE - idx->front) % REAL_SIZE != 1;
+            case OP::PUSH_BACK:
+            case OP::POP_FRONT:
+                return (idx->front + REAL_SIZE - idx->back) % REAL_SIZE != 1;
+            default:
+                return true;
+            }
+        }
+
+        [[nodiscard]]
         std::atomic<task_t*>& getTask(size_t idx)
+            override
         {
             return tasks[idx];
         }
