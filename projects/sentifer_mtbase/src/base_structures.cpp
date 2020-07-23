@@ -83,6 +83,9 @@ bool task_storage::push_front(task_t* task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_FRONT);
 
+    if (desc == nullptr)
+        return false;
+
     bool result = (desc->phase == descriptor::PHASE::COMPLETE);
     destroyDesc(desc);
 
@@ -93,6 +96,9 @@ bool task_storage::push_front(task_t* task)
 bool task_storage::push_back(task_t* task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_BACK);
+
+    if (desc == nullptr)
+        return false;
 
     bool result = (desc->phase == descriptor::PHASE::COMPLETE);
     destroyDesc(desc);
@@ -105,6 +111,9 @@ task_t* task_storage::pop_front()
 {
     descriptor* const desc = createDesc(nullptr, OP::POP_FRONT);
 
+    if (desc == nullptr)
+        return nullptr;
+
     task_t* result = (desc->phase == descriptor::PHASE::COMPLETE ?
         desc->oldTask : nullptr);
     destroyDesc(desc);
@@ -116,6 +125,9 @@ task_t* task_storage::pop_front()
 task_t* task_storage::pop_back()
 {
     descriptor* const desc = createDesc(nullptr, OP::POP_BACK);
+
+    if (desc == nullptr)
+        return nullptr;
 
     task_t* result = (desc->phase == descriptor::PHASE::COMPLETE ?
         desc->oldTask : nullptr);
