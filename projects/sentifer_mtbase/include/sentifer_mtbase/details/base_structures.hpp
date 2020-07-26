@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <array>
-#include <compare>
 
 #include "memory_managers.hpp"
 
@@ -29,11 +28,8 @@ namespace mtbase
 
         struct index_t
         {
-            auto operator<=> (const index_t&) const = default;
-
-        public:
-            size_t front = 0;
-            size_t back = 1;
+            const size_t front = 0;
+            const size_t back = 1;
         };
 
         struct descriptor
@@ -53,10 +49,10 @@ namespace mtbase
                 index_t* const newIndexLoad)
                 const noexcept;
             [[nodiscard]]
-            descriptor completed(index_t* const oldIndexLoad)
+            descriptor completed()
                 const noexcept;
             [[nodiscard]]
-            descriptor failed(index_t* const oldIndexLoad)
+            descriptor failed()
                 const noexcept;
 
         public:
@@ -152,7 +148,6 @@ namespace mtbase
         [[nodiscard]]
         bool tryCommitIndex(descriptor* const desc)
             noexcept;
-        [[nodiscard]]
         bool tryRegister(
             descriptor*& expected,
             descriptor* const desired)

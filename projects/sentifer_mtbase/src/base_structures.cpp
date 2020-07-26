@@ -22,34 +22,26 @@ task_storage::descriptor task_storage::descriptor::rollbacked(
 }
 
 [[nodiscard]]
-task_storage::descriptor task_storage::descriptor::completed(
-    index_t* const oldIndexLoad)
+task_storage::descriptor task_storage::descriptor::completed()
     const noexcept
 {
     return descriptor
     {
         .phase = descriptor::PHASE::COMPLETE,
         .op = op,
-        .target = target,
-        .oldTask = oldTask,
-        .newTask = newTask,
-        .oldIndex = oldIndexLoad
+        .target = target
     };
 }
 
 [[nodiscard]]
-task_storage::descriptor task_storage::descriptor::failed(
-    index_t* const oldIndexLoad)
+task_storage::descriptor task_storage::descriptor::failed()
     const noexcept
 {
     return descriptor
     {
         .phase = descriptor::PHASE::FAIL,
         .op = op,
-        .target = target,
-        .oldTask = oldTask,
-        .newTask = newTask,
-        .oldIndex = oldIndexLoad
+        .target = target
     };
 }
 
@@ -57,41 +49,12 @@ task_storage::descriptor task_storage::descriptor::failed(
 
 template<class T>
 bool tryEfficientCAS(
-    std::atomic<T*>& target,
-    T*& expected,
-    T* const desired)
+    std::atomic<T>& target,
+    T& expected,
+    T const desired)
     noexcept
 {
     return target.compare_exchange_strong(expected, desired,
-        std::memory_order_acq_rel, std::memory_order_acquire);
-}
-
-bool tryEfficientCAS(
-    std::atomic_bool& target,
-    bool& expected,
-    bool const desired)
-    noexcept
-{
-    return target.compare_exchange_strong(expected, desired,
-        std::memory_order_acq_rel, std::memory_order_acquire);
-}
-
-template<class T>
-bool tryEfficientCASWithCompInnerVal(
-    std::atomic<T*>& target,
-    T*& expected,
-    T* const desired)
-    noexcept
-{
-    T* origin = target.load(std::memory_order_acquire);
-    if (*origin != *expected)
-    {
-        *expected = *origin;
-
-        return false;
-    }
-
-    return target.compare_exchange_strong(origin, desired,
         std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
@@ -185,16 +148,14 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
 
 void task_storage::destroyDesc(descriptor* const desc)
 {
-    descriptor* oldDesc = desc;
-    while (!tryRegister(oldDesc, nullptr))
-        if (oldDesc == desc)
-            break;
+    if (desc == nullptr)
+        return;
 
-    index_t* const curIndex = index.load(std::memory_order_acquire);
-    if (desc->oldIndex != curIndex)
-        delete_index(desc->oldIndex);
-    if (desc->newIndex != curIndex)
-        delete_index(desc->newIndex);
+    descriptor* oldDesc = desc;
+    tryRegister(oldDesc, nullptr);
+
+    delete_index(desc->oldIndex);
+    delete_index(desc->newIndex);
 
     delete_desc(desc);
 }
@@ -256,10 +217,12 @@ void task_storage::slow_path(descriptor*& desc)
         if (tryRegister(oldDesc, desc))
             break;
 
-        help_registered(oldDesc);
+        descriptor* trouble = new_desc(std::move(*oldDesc));
+        help_registered(trouble);
     }
 
-    help_registered(desc);
+    descriptor* trouble = new_desc(std::move(*desc));
+    help_registered(trouble);
 }
 
 void task_storage::help_registered(descriptor*& desc)
@@ -288,8 +251,7 @@ void task_storage::help_registered_complete(descriptor*& desc)
     while (desc->phase != descriptor::PHASE::COMPLETE)
     {
         descriptor* oldDesc = desc;
-        desc = new_desc(
-            oldDesc->completed(index.load(std::memory_order_acquire)));
+        desc = new_desc(oldDesc->completed());
         renewRegistered(oldDesc, desc);
     }
 }
@@ -349,8 +311,11 @@ task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 [[nodiscard]]
 task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
 {
-    descriptor* oldDesc = desc;
-    index_t* const oldIndex = index.load(std::memory_order_acquire);
+    descriptor* oldDesc = new_desc(std::move(*desc));
+    delete_desc(desc);
+
+    index_t* const oldIndex =
+        new_index(std::move(*(index.load(std::memory_order_acquire))));
     if (isValidIndex(oldIndex, oldDesc->op))
     {
         index_t* const newIndex =
@@ -358,7 +323,7 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
         desc = new_desc(oldDesc->rollbacked(oldIndex, newIndex));
     }
     else
-        desc = new_desc(oldDesc->failed(oldIndex));
+        desc = new_desc(oldDesc->failed());
     return oldDesc;
 }
 
@@ -367,8 +332,7 @@ void task_storage::completeDesc(descriptor*& desc)
     descriptor* const oldDesc = desc;
     delete_index(oldDesc->oldIndex);
 
-    desc = new_desc(
-        oldDesc->completed(index.load(std::memory_order_acquire)));
+    desc = new_desc(oldDesc->completed());
     delete_desc(oldDesc);
 }
 
@@ -389,7 +353,7 @@ void task_storage::renewRegistered(
         destroyDesc(oldDesc);
         destroyDesc(newDesc);
 
-        desc = curDesc;
+        desc = new_desc(std::move(*curDesc));
     }
 }
 
@@ -432,10 +396,7 @@ bool task_storage::tryCommitTask(descriptor* const desc)
 {
     task_t* oldTask = desc->oldTask;
 
-    if (tryEfficientCAS(desc->target, oldTask, desc->newTask))
-        return true;
-
-    return oldTask == desc->newTask;
+    return tryEfficientCAS(desc->target, oldTask, desc->newTask);
 }
 
 [[nodiscard]]
@@ -443,23 +404,39 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
     noexcept
 {
     index_t* oldIndex = desc->oldIndex;
+    index_t* newIndex = new_index(std::move(*(desc->newIndex)));
 
-    if (tryEfficientCASWithCompInnerVal(index, oldIndex, desc->newIndex))
+    index_t* origin = index.load(std::memory_order_acquire);
+    if (origin->front != oldIndex->front || origin->back != oldIndex->back)
+    {
+        oldIndex->~index_t();
+        new(oldIndex) index_t{ *origin };
+        delete_index(newIndex);
+
+        return false;
+    }
+
+    if (tryEfficientCAS(index, origin, newIndex))
         return true;
 
-    return *(oldIndex) == *(desc->newIndex);
+    delete_index(newIndex);
+
+    return false;
 }
 
-[[nodiscard]]
 bool task_storage::tryRegister(
     descriptor*& expected,
     descriptor* const desired)
     noexcept
 {
-    if (tryEfficientCAS(registered, expected, desired))
+    descriptor* const copied =
+        desired == nullptr ? nullptr : new_desc(std::move(*desired));
+    if (tryEfficientCAS(registered, expected, copied))
         return true;
 
-    return expected == desired;
+    delete_desc(copied);
+
+    return false;
 }
 
 #pragma endregion task_storage
