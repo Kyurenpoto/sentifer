@@ -229,6 +229,8 @@ void task_storage::applyDesc(descriptor*& desc)
     if (helpDesc != nullptr)
         help_registered(helpDesc);
 
+    while (!trySetProgress(desc));
+
     for (size_t i = 0; i < MAX_RETRY; ++i)
         if (fast_path(desc))
             return;
@@ -238,19 +240,8 @@ void task_storage::applyDesc(descriptor*& desc)
 
 bool task_storage::fast_path(descriptor*& desc)
 {
-    if (!trySetProgress(desc))
+    if (!tryCommit(desc))
         return false;
-
-    if (!tryCommitTask(desc))
-        return false;
-
-    if (!tryCommitIndex(desc))
-    {
-        descriptor* oldDesc = rollbackTask(desc);
-        destroyDesc(oldDesc);
-
-        return false;
-    }
 
     completeDesc(desc);
 
@@ -259,18 +250,11 @@ bool task_storage::fast_path(descriptor*& desc)
 
 void task_storage::slow_path(descriptor*& desc)
 {
-    descriptor* oldDesc = nullptr;
-    bool progress = false;
     while (true)
     {
-        if (!progress)
-            progress = trySetProgress(desc);
-
-        if (progress && tryRegister(oldDesc, desc))
+        descriptor* oldDesc = nullptr;
+        if (tryRegister(oldDesc, desc))
             break;
-
-        if (oldDesc == nullptr)
-            continue;
 
         help_registered(oldDesc);
     }
@@ -291,14 +275,8 @@ void task_storage::help_registered_progress(descriptor*& desc)
         if (desc->phase != descriptor::PHASE::RESERVE)
             return;
 
-        if (!tryCommitTask(desc))
-            continue;
-
-        if (tryCommitIndex(desc))
+        if (tryCommitWithRegistered(desc))
             break;
-
-        descriptor* oldDesc = rollbackTask(desc);
-        renewRegistered(oldDesc, desc);
     }
 }
 
@@ -396,6 +374,42 @@ std::atomic_bool& task_storage::getTargetProgress(const OP op)
     default:
         return progressBack;
     }
+}
+
+[[nodiscard]]
+bool task_storage::tryCommit(descriptor*& desc)
+    noexcept
+{
+    if (!tryCommitTask(desc))
+        return false;
+
+    if (!tryCommitIndex(desc))
+    {
+        descriptor* oldDesc = rollbackTask(desc);
+        destroyDesc(oldDesc);
+
+        return false;
+    }
+
+    return true;
+}
+
+[[nodiscard]]
+bool task_storage::tryCommitWithRegistered(descriptor*& desc)
+noexcept
+{
+    if (!tryCommitTask(desc))
+        return false;
+
+    if (!tryCommitIndex(desc))
+    {
+        descriptor* oldDesc = rollbackTask(desc);
+        renewRegistered(oldDesc, desc);
+
+        return false;
+    }
+
+    return true;
 }
 
 [[nodiscard]]

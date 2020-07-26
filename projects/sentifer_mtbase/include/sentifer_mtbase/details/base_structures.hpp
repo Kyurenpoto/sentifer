@@ -141,6 +141,12 @@ namespace mtbase
         std::atomic_bool& getTargetProgress(const OP op)
             noexcept;
         [[nodiscard]]
+        bool tryCommit(descriptor*& desc)
+            noexcept;
+        [[nodiscard]]
+        bool tryCommitWithRegistered(descriptor*& desc)
+            noexcept;
+        [[nodiscard]]
         bool tryCommitTask(descriptor* const desc)
             noexcept;
         [[nodiscard]]
