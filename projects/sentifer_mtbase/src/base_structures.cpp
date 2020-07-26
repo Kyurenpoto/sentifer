@@ -178,6 +178,14 @@ task_storage::descriptor* task_storage::new_desc(descriptor&& desc)
     return alloc.new_object<descriptor>(desc);
 }
 
+[[nodiscard]]
+task_storage::descriptor* task_storage::copy_desc(descriptor* const desc)
+{
+    return new_desc(desc->rollbacked(
+        new_index(std::move(*(desc->oldIndex))),
+        new_index(std::move(*(desc->newIndex)))));
+}
+
 void task_storage::delete_desc(descriptor* const desc)
 {
     if (desc != nullptr)
@@ -217,11 +225,11 @@ void task_storage::slow_path(descriptor*& desc)
         if (tryRegister(oldDesc, desc))
             break;
 
-        descriptor* trouble = new_desc(std::move(*oldDesc));
+        descriptor* trouble = copy_desc(oldDesc);
         help_registered(trouble);
     }
 
-    descriptor* trouble = new_desc(std::move(*desc));
+    descriptor* trouble = copy_desc(desc);
     help_registered(trouble);
 }
 
@@ -311,7 +319,7 @@ task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 [[nodiscard]]
 task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
 {
-    descriptor* oldDesc = new_desc(std::move(*desc));
+    descriptor* oldDesc = copy_desc(desc);
     delete_desc(desc);
 
     index_t* const oldIndex =
@@ -353,7 +361,7 @@ void task_storage::renewRegistered(
         destroyDesc(oldDesc);
         destroyDesc(newDesc);
 
-        desc = new_desc(std::move(*curDesc));
+        desc = copy_desc(curDesc);
     }
 }
 
@@ -429,9 +437,36 @@ bool task_storage::tryRegister(
     descriptor* const desired)
     noexcept
 {
+    descriptor* origin = registered.load(std::memory_order_acquire);
     descriptor* const copied =
-        desired == nullptr ? nullptr : new_desc(std::move(*desired));
-    if (tryEfficientCAS(registered, expected, copied))
+        desired == nullptr ? nullptr : copy_desc(desired);
+    if (origin == nullptr && expected != nullptr)
+    {
+        expected = nullptr;
+        delete_desc(copied);
+
+        return false;
+    }
+
+    descriptor* originCopied =
+        origin == nullptr ? nullptr : copy_desc(origin);
+    if (origin != nullptr &&
+        (expected == nullptr ||
+            originCopied->phase != expected->phase ||
+            originCopied->op != expected->op ||
+            originCopied->target != expected->target ||
+            originCopied->oldIndex != expected->oldIndex ||
+            originCopied->newTask != expected->newTask))
+    {
+        expected = originCopied;
+        delete_desc(copied);
+
+        return false;
+    }
+
+    delete_desc(originCopied);
+
+    if (tryEfficientCAS(registered, origin, copied))
         return true;
 
     delete_desc(copied);

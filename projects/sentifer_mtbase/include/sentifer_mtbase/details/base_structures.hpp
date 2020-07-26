@@ -100,6 +100,8 @@ namespace mtbase
         void delete_index(index_t* const idx);
         [[nodiscard]]
         descriptor* new_desc(descriptor&& desc);
+        [[nodiscard]]
+        descriptor* copy_desc(descriptor* const desc);
         void delete_desc(descriptor* const desc);
 
         [[nodiscard]]
