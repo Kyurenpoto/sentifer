@@ -126,7 +126,13 @@ namespace mtbase
         void help_registered_progress(descriptor*& desc);
         void help_registered_complete(descriptor*& desc);
         [[nodiscard]]
+        bool tryCommit(descriptor*& desc);
+        [[nodiscard]]
+        bool tryCommitWithRegistered(descriptor*& desc);
+        [[nodiscard]]
         descriptor* rollbackTask(descriptor*& desc);
+        [[nodiscard]]
+        descriptor* refreshIndex(descriptor*& desc);
         void completeDesc(descriptor*& desc);
         void renewRegistered(
             descriptor* const oldDesc,
@@ -139,12 +145,6 @@ namespace mtbase
             noexcept;
         [[nodiscard]]
         std::atomic_bool& getTargetProgress(const OP op)
-            noexcept;
-        [[nodiscard]]
-        bool tryCommit(descriptor*& desc)
-            noexcept;
-        [[nodiscard]]
-        bool tryCommitWithRegistered(descriptor*& desc)
             noexcept;
         [[nodiscard]]
         bool tryCommitTask(descriptor* const desc)

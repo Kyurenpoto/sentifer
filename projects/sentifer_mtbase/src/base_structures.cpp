@@ -276,7 +276,7 @@ void task_storage::help_registered_progress(descriptor*& desc)
             return;
 
         if (tryCommitWithRegistered(desc))
-            break;
+            return;
     }
 }
 
@@ -295,10 +295,60 @@ void task_storage::help_registered_complete(descriptor*& desc)
 }
 
 [[nodiscard]]
+bool task_storage::tryCommit(descriptor*& desc)
+{
+    if (!tryCommitTask(desc))
+    {
+        descriptor* oldDesc = refreshIndex(desc);
+        destroyDesc(oldDesc);
+
+        return false;
+    }
+
+    if (!tryCommitIndex(desc))
+    {
+        descriptor* oldDesc = rollbackTask(desc);
+        destroyDesc(oldDesc);
+
+        return false;
+    }
+
+    return true;
+}
+
+[[nodiscard]]
+bool task_storage::tryCommitWithRegistered(descriptor*& desc)
+{
+    if (!tryCommitTask(desc))
+    {
+        descriptor* oldDesc = refreshIndex(desc);
+        renewRegistered(oldDesc, desc);
+
+        return false;
+    }
+
+    if (!tryCommitIndex(desc))
+    {
+        descriptor* oldDesc = rollbackTask(desc);
+        renewRegistered(oldDesc, desc);
+
+        return false;
+    }
+
+    return true;
+}
+
+[[nodiscard]]
 task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 {
     desc->target.store(desc->oldTask, std::memory_order_release);
 
+    return refreshIndex(desc);
+}
+
+[[nodiscard]]
+task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
+{
     descriptor* oldDesc = desc;
     index_t* const oldIndex = index.load(std::memory_order_acquire);
     if (isValidIndex(oldIndex, oldDesc->op))
@@ -374,42 +424,6 @@ std::atomic_bool& task_storage::getTargetProgress(const OP op)
     default:
         return progressBack;
     }
-}
-
-[[nodiscard]]
-bool task_storage::tryCommit(descriptor*& desc)
-    noexcept
-{
-    if (!tryCommitTask(desc))
-        return false;
-
-    if (!tryCommitIndex(desc))
-    {
-        descriptor* oldDesc = rollbackTask(desc);
-        destroyDesc(oldDesc);
-
-        return false;
-    }
-
-    return true;
-}
-
-[[nodiscard]]
-bool task_storage::tryCommitWithRegistered(descriptor*& desc)
-noexcept
-{
-    if (!tryCommitTask(desc))
-        return false;
-
-    if (!tryCommitIndex(desc))
-    {
-        descriptor* oldDesc = rollbackTask(desc);
-        renewRegistered(oldDesc, desc);
-
-        return false;
-    }
-
-    return true;
 }
 
 [[nodiscard]]
