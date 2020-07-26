@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <array>
+#include <compare>
 
 #include "memory_managers.hpp"
 
@@ -28,8 +29,11 @@ namespace mtbase
 
         struct index_t
         {
-            const size_t front = 0;
-            const size_t back = 1;
+            auto operator<=> (const index_t&) const = default;
+
+        public:
+            size_t front = 0;
+            size_t back = 1;
         };
 
         struct descriptor
@@ -232,19 +236,16 @@ namespace mtbase
         bool isValidIndex(index_t* const idx, OP op)
             const noexcept override
         {
-            if (idx->front == idx->back)
-                return false;
-
             switch (op)
             {
             case OP::PUSH_FRONT:
             case OP::POP_BACK:
-                return (idx->back + REAL_SIZE - idx->front) % REAL_SIZE != 1;
+                return (idx->back + REAL_SIZE - idx->front) % REAL_SIZE >= 2;
             case OP::PUSH_BACK:
             case OP::POP_FRONT:
-                return (idx->front + REAL_SIZE - idx->back) % REAL_SIZE != 1;
+                return (idx->front + REAL_SIZE - idx->back) % REAL_SIZE >= 2;
             default:
-                return true;
+                return false;
             }
         }
 

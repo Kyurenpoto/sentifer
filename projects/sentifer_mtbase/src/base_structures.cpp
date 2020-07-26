@@ -76,6 +76,25 @@ bool tryEfficientCAS(
         std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
+template<class T>
+bool tryEfficientCASWithCompInnerVal(
+    std::atomic<T*>& target,
+    T*& expected,
+    T* const desired)
+    noexcept
+{
+    T* origin = target.load(std::memory_order_acquire);
+    if (*origin != *expected)
+    {
+        *expected = *origin;
+
+        return false;
+    }
+
+    return target.compare_exchange_strong(origin, desired,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
 #pragma region task_storage
 
 [[nodiscard]]
@@ -139,12 +158,12 @@ task_t* task_storage::pop_back()
 [[nodiscard]]
 task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
 {
-    index_t* const oldIndex = index.load(std::memory_order_acquire);
-    if (!isValidIndex(oldIndex, op))
+    index_t oldIndex = *(index.load(std::memory_order_acquire));
+    if (!isValidIndex(&oldIndex, op))
         return nullptr;
 
-    index_t* const newIndex = new_index(moveIndex(oldIndex, op));
-    std::atomic<task_t*>& target = getTask(getTargetIndex(oldIndex, op));
+    index_t* const newIndex = new_index(moveIndex(&oldIndex, op));
+    std::atomic<task_t*>& target = getTask(getTargetIndex(&oldIndex, op));
 
     descriptor* desc = new_desc(descriptor
         {
@@ -153,7 +172,7 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
             .target = target,
             .oldTask = target.load(std::memory_order_acquire),
             .newTask = task,
-            .oldIndex = oldIndex,
+            .oldIndex = new_index(std::move(oldIndex)),
             .newIndex = newIndex
         });
 
@@ -397,10 +416,10 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
 {
     index_t* oldIndex = desc->oldIndex;
 
-    if (tryEfficientCAS(index, oldIndex, desc->newIndex))
+    if (tryEfficientCASWithCompInnerVal(index, oldIndex, desc->newIndex))
         return true;
 
-    return oldIndex == desc->newIndex;
+    return *(oldIndex) == *(desc->newIndex);
 }
 
 [[nodiscard]]
