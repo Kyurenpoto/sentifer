@@ -5,15 +5,36 @@ using namespace mtbase;
 #pragma region task_storage__descriptor
 
 [[nodiscard]]
-task_storage::descriptor task_storage::descriptor::rollbacked(
+task_storage::descriptor task_storage::descriptor::copied(
     index_t* const oldIndexLoad,
-    index_t* const newIndexLoad)
+    index_t* const newIndexLoad,
+    std::atomic<task_t*>& targetLoad)
     const noexcept
 {
     return descriptor
     {
+        .phase = phase,
         .op = op,
-        .target = target,
+        .target = targetLoad,
+        .oldTask = oldTask,
+        .newTask = newTask,
+        .oldIndex = oldIndexLoad,
+        .newIndex = newIndexLoad
+    };
+}
+
+[[nodiscard]]
+task_storage::descriptor task_storage::descriptor::rollbacked(
+    index_t* const oldIndexLoad,
+    index_t* const newIndexLoad,
+    std::atomic<task_t*>& targetLoad)
+    const noexcept
+{
+    return descriptor
+    {
+        .phase = descriptor::PHASE::RESERVE,
+        .op = op,
+        .target = targetLoad,
         .oldTask = oldTask,
         .newTask = newTask,
         .oldIndex = oldIndexLoad,
@@ -125,19 +146,23 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
     if (!isValidIndex(&oldIndex, op))
         return nullptr;
 
-    index_t* const newIndex = new_index(moveIndex(&oldIndex, op));
+    index_t newIndex = moveIndex(&oldIndex, op);
     std::atomic<task_t*>& target = getTask(getTargetIndex(&oldIndex, op));
 
-    descriptor* desc = new_desc(descriptor
+    descriptor descVal
+    {
+        descriptor
         {
             .phase = descriptor::PHASE::RESERVE,
             .op = op,
             .target = target,
             .oldTask = target.load(std::memory_order_acquire),
             .newTask = task,
-            .oldIndex = new_index(std::move(oldIndex)),
-            .newIndex = newIndex
-        });
+            .oldIndex = new_index(&oldIndex),
+            .newIndex = new_index(&newIndex)
+        }
+    };
+    descriptor* desc = new_desc(&descVal);
 
     applyDesc(desc);
 
@@ -161,9 +186,9 @@ void task_storage::destroyDesc(descriptor* const desc)
 }
 
 [[nodiscard]]
-task_storage::index_t* task_storage::new_index(index_t&& idx)
+task_storage::index_t* task_storage::new_index(index_t* const idx)
 {
-    return alloc.new_object<index_t>(idx);
+    return alloc.new_object<index_t>(*idx);
 }
 
 void task_storage::delete_index(index_t* const idx)
@@ -173,17 +198,23 @@ void task_storage::delete_index(index_t* const idx)
 }
 
 [[nodiscard]]
-task_storage::descriptor* task_storage::new_desc(descriptor&& desc)
+task_storage::descriptor* task_storage::new_desc(descriptor* const desc)
 {
-    return alloc.new_object<descriptor>(desc);
+    return alloc.new_object<descriptor>(*desc);
 }
 
 [[nodiscard]]
 task_storage::descriptor* task_storage::copy_desc(descriptor* const desc)
 {
-    return new_desc(desc->rollbacked(
-        new_index(std::move(*(desc->oldIndex))),
-        new_index(std::move(*(desc->newIndex)))));
+    descriptor rollbacked
+    {
+        desc->copied(
+        new_index(desc->oldIndex),
+        new_index(desc->newIndex),
+        getTask(getTargetIndex(desc->oldIndex, desc->op)))
+    };
+
+    return new_desc(&rollbacked);
 }
 
 void task_storage::delete_desc(descriptor* const desc)
@@ -194,11 +225,12 @@ void task_storage::delete_desc(descriptor* const desc)
 
 void task_storage::applyDesc(descriptor*& desc)
 {
-    descriptor* helpDesc = registered.load(std::memory_order_acquire);
-    if (helpDesc != nullptr)
-        help_registered(helpDesc);
-
-    while (!trySetProgress(desc));
+    do
+    {
+        descriptor* helpDesc = registered.load(std::memory_order_acquire);
+        if (helpDesc != nullptr)
+            help_registered(helpDesc);
+    } while (!trySetProgress(desc));
 
     for (size_t i = 0; i < MAX_RETRY; ++i)
         if (fast_path(desc))
@@ -259,7 +291,8 @@ void task_storage::help_registered_complete(descriptor*& desc)
     while (desc->phase != descriptor::PHASE::COMPLETE)
     {
         descriptor* oldDesc = desc;
-        desc = new_desc(oldDesc->completed());
+        descriptor completed = oldDesc->completed();
+        desc = new_desc(&completed);
         renewRegistered(oldDesc, desc);
     }
 }
@@ -322,16 +355,19 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
     descriptor* oldDesc = copy_desc(desc);
     delete_desc(desc);
 
-    index_t* const oldIndex =
-        new_index(std::move(*(index.load(std::memory_order_acquire))));
-    if (isValidIndex(oldIndex, oldDesc->op))
+    index_t oldIndex = *(index.load(std::memory_order_acquire));
+    if (isValidIndex(&oldIndex, oldDesc->op))
     {
-        index_t* const newIndex =
-            new_index(moveIndex(oldIndex, oldDesc->op));
-        desc = new_desc(oldDesc->rollbacked(oldIndex, newIndex));
+        index_t newIndex = moveIndex(&oldIndex, oldDesc->op);
+        descriptor rollbacked = oldDesc->rollbacked(&oldIndex, &newIndex,
+            getTask(getTargetIndex(&oldIndex, oldDesc->op)));
+        desc = new_desc(&rollbacked);
     }
     else
-        desc = new_desc(oldDesc->failed());
+    {
+        descriptor failed = oldDesc->failed();
+        desc = new_desc(&failed);
+    }
     return oldDesc;
 }
 
@@ -340,7 +376,8 @@ void task_storage::completeDesc(descriptor*& desc)
     descriptor* const oldDesc = desc;
     delete_index(oldDesc->oldIndex);
 
-    desc = new_desc(oldDesc->completed());
+    descriptor completed = oldDesc->completed();
+    desc = new_desc(&completed);
     delete_desc(oldDesc);
 }
 
@@ -412,7 +449,7 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
     noexcept
 {
     index_t* oldIndex = desc->oldIndex;
-    index_t* newIndex = new_index(std::move(*(desc->newIndex)));
+    index_t* newIndex = new_index(desc->newIndex);
 
     index_t* origin = index.load(std::memory_order_acquire);
     if (origin->front != oldIndex->front || origin->back != oldIndex->back)
@@ -437,19 +474,20 @@ bool task_storage::tryRegister(
     descriptor* const desired)
     noexcept
 {
-    descriptor* origin = registered.load(std::memory_order_acquire);
     descriptor* const copied =
         desired == nullptr ? nullptr : copy_desc(desired);
+    descriptor* origin = registered.load(std::memory_order_acquire);
+    descriptor* const originCopied =
+        origin == nullptr ? nullptr : copy_desc(origin);
     if (origin == nullptr && expected != nullptr)
     {
         expected = nullptr;
         delete_desc(copied);
+        delete_desc(originCopied);
 
         return false;
     }
 
-    descriptor* originCopied =
-        origin == nullptr ? nullptr : copy_desc(origin);
     if (origin != nullptr &&
         (expected == nullptr ||
             originCopied->phase != expected->phase ||
@@ -470,6 +508,8 @@ bool task_storage::tryRegister(
         return true;
 
     delete_desc(copied);
+    
+    origin = registered.load(std::memory_order_acquire);
 
     return false;
 }

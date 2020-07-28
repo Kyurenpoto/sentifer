@@ -44,9 +44,16 @@ namespace mtbase
 
         public:
             [[nodiscard]]
+            descriptor copied(
+                index_t* const oldIndexLoad,
+                index_t* const newIndexLoad,
+                std::atomic<task_t*>& targetLoad)
+                const noexcept;
+            [[nodiscard]]
             descriptor rollbacked(
                 index_t* const oldIndexLoad,
-                index_t* const newIndexLoad)
+                index_t* const newIndexLoad,
+                std::atomic<task_t*>& targetLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor completed()
@@ -69,7 +76,8 @@ namespace mtbase
         task_storage(std::pmr::memory_resource* res) :
             alloc{ res }
         {
-            index_t* init = new_index(index_t{});
+            index_t idx{ index_t{} };
+            index_t* init = new_index(&idx);
             index.store(init, std::memory_order_relaxed);
         }
 
@@ -96,10 +104,10 @@ namespace mtbase
         descriptor* createDesc(task_t* task, OP op);
         void destroyDesc(descriptor* const desc);
         [[nodiscard]]
-        index_t* new_index(index_t&& idx);
+        index_t* new_index(index_t* const idx);
         void delete_index(index_t* const idx);
         [[nodiscard]]
-        descriptor* new_desc(descriptor&& desc);
+        descriptor* new_desc(descriptor* const desc);
         [[nodiscard]]
         descriptor* copy_desc(descriptor* const desc);
         void delete_desc(descriptor* const desc);
@@ -175,7 +183,10 @@ namespace mtbase
     public:
         task_wait_free_deque(std::pmr::memory_resource* res) :
             task_storage{ res }
-        {}
+        {
+            for (auto& x : tasks)
+                x.store(nullptr, std::memory_order_relaxed);
+        }
 
         ~task_wait_free_deque()
         {}
