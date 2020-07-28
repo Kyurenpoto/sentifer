@@ -45,14 +45,14 @@ namespace mtbase
         public:
             [[nodiscard]]
             descriptor copied(
-                index_t* const oldIndexLoad,
-                index_t* const newIndexLoad,
+                const index_t& oldIndexLoad,
+                const index_t& newIndexLoad,
                 task_t* const oldTaskLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor rollbacked(
-                index_t* const oldIndexLoad,
-                index_t* const newIndexLoad,
+                const index_t& oldIndexLoad,
+                const index_t& newIndexLoad,
                 task_t* const oldTaskLoad)
                 const noexcept;
             [[nodiscard]]
@@ -65,10 +65,10 @@ namespace mtbase
         public:
             const PHASE phase{ PHASE::RESERVE };
             const OP op{ OP::PUSH_FRONT };
-            task_t* const oldTask = nullptr;
-            task_t* const newTask = nullptr;
-            index_t* const oldIndex = nullptr;
-            index_t* const newIndex = nullptr;
+            task_t* const oldTask{ nullptr };
+            task_t* const newTask{ nullptr };
+            const index_t oldIndex{ index_t{} };
+            const index_t newIndex{ index_t{} };
         };
 
     public:
@@ -103,22 +103,24 @@ namespace mtbase
         descriptor* createDesc(task_t* task, OP op);
         void destroyDesc(descriptor* const desc);
         [[nodiscard]]
-        index_t* new_index(index_t* const idx);
+        index_t* new_index(const index_t* const idx);
         void delete_index(index_t* const idx);
         [[nodiscard]]
-        descriptor* new_desc(descriptor* const desc);
+        descriptor* new_desc(const descriptor* const desc);
         [[nodiscard]]
         descriptor* copy_desc(descriptor* const desc);
         void delete_desc(descriptor* const desc);
 
         [[nodiscard]]
-        virtual std::atomic<task_t*>& getElementRef(index_t* const idx, OP op) = 0;
+        virtual std::atomic<task_t*>& getElementRef(
+            const index_t& idx,
+            OP op) = 0;
 
         [[nodiscard]]
-        virtual index_t moveIndex(index_t* const origin, OP op)
+        virtual index_t moveIndex(const index_t& origin, OP op)
             const noexcept = 0;
         [[nodiscard]]
-        virtual bool isValidIndex(index_t* const idx, OP op)
+        virtual bool isValidIndex(const index_t& idx, OP op)
             const noexcept = 0;
         [[nodiscard]]
         virtual bool isValidDesc(descriptor* const desc)
@@ -193,14 +195,14 @@ namespace mtbase
 
     protected:
         [[nodiscard]]
-        std::atomic<task_t*>& getElementRef(index_t* const idx, OP op)
+        std::atomic<task_t*>& getElementRef(const index_t& idx, OP op)
             override
         {
             return tasks[getTargetIndex(idx, op)];
         }
 
         [[nodiscard]]
-        index_t moveIndex(index_t* const origin, OP op)
+        index_t moveIndex(const index_t& origin, OP op)
             const noexcept override
         {
             switch (op)
@@ -208,26 +210,26 @@ namespace mtbase
             case OP::PUSH_FRONT:
                 return index_t
                 {
-                    .front = (origin->front + REAL_SIZE - 1) % REAL_SIZE,
-                    .back = origin->back
+                    .front = (origin.front + REAL_SIZE - 1) % REAL_SIZE,
+                    .back = origin.back
                 };
             case OP::PUSH_BACK:
                 return index_t
                 {
-                    .front = origin->front,
-                    .back = (origin->back + 1) % REAL_SIZE
+                    .front = origin.front,
+                    .back = (origin.back + 1) % REAL_SIZE
                 };
             case OP::POP_FRONT:
                 return index_t
                 {
-                    .front = (origin->front + 1) % REAL_SIZE,
-                    .back = origin->back
+                    .front = (origin.front + 1) % REAL_SIZE,
+                    .back = origin.back
                 };
             case OP::POP_BACK:
                 return index_t
                 {
-                    .front = origin->front,
-                    .back = (origin->back + REAL_SIZE - 1) % REAL_SIZE
+                    .front = origin.front,
+                    .back = (origin.back + REAL_SIZE - 1) % REAL_SIZE
                 };
             default:
                 return index_t{};
@@ -235,20 +237,20 @@ namespace mtbase
         }
 
         [[nodiscard]]
-        bool isValidIndex(index_t* const idx, OP op)
+        bool isValidIndex(const index_t& idx, OP op)
             const noexcept override
         {
-            if (idx->front >= REAL_SIZE || idx->back >= REAL_SIZE)
+            if (idx.front >= REAL_SIZE || idx.back >= REAL_SIZE)
                 return false;
 
             switch (op)
             {
             case OP::PUSH_FRONT:
             case OP::POP_BACK:
-                return (idx->back + REAL_SIZE - idx->front) % REAL_SIZE >= 2;
+                return (idx.back + REAL_SIZE - idx.front) % REAL_SIZE >= 2;
             case OP::PUSH_BACK:
             case OP::POP_FRONT:
-                return (idx->front + REAL_SIZE - idx->back) % REAL_SIZE >= 2;
+                return (idx.front + REAL_SIZE - idx.back) % REAL_SIZE >= 2;
             default:
                 return false;
             }
@@ -272,19 +274,19 @@ namespace mtbase
 
     private:
         [[nodiscard]]
-        size_t getTargetIndex(index_t* const idx, OP op)
+        size_t getTargetIndex(const index_t& idx, OP op)
             const noexcept
         {
             switch (op)
             {
             case OP::PUSH_FRONT:
-                return idx->front;
+                return idx.front;
             case OP::PUSH_BACK:
-                return idx->back;
+                return idx.back;
             case OP::POP_FRONT:
-                return (idx->front + 1) % REAL_SIZE;
+                return (idx.front + 1) % REAL_SIZE;
             case OP::POP_BACK:
-                return (idx->back + REAL_SIZE - 1) % REAL_SIZE;
+                return (idx.back + REAL_SIZE - 1) % REAL_SIZE;
             default:
                 return 0;
             }
