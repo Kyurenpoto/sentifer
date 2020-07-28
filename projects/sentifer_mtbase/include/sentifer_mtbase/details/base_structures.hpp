@@ -76,7 +76,7 @@ namespace mtbase
             alloc{ res }
         {
             index_t idx{ index_t{} };
-            index_t* init = new_index(&idx);
+            index_t* init = new_index(idx);
             index.store(init, std::memory_order_relaxed);
         }
 
@@ -103,10 +103,10 @@ namespace mtbase
         descriptor* createDesc(task_t* task, OP op);
         void destroyDesc(descriptor* const desc);
         [[nodiscard]]
-        index_t* new_index(const index_t* const idx);
+        index_t* new_index(const index_t& idx);
         void delete_index(index_t* const idx);
         [[nodiscard]]
-        descriptor* new_desc(const descriptor* const desc);
+        descriptor* new_desc(const descriptor& desc);
         [[nodiscard]]
         descriptor* copy_desc(descriptor* const desc);
         void delete_desc(descriptor* const desc);
@@ -265,8 +265,7 @@ namespace mtbase
 
             if (*reinterpret_cast<const size_t*>(&desc->phase) >= 3 ||
                 *reinterpret_cast<const size_t*>(&desc->op) >= 5 ||
-                !isValidIndex(desc->oldIndex, desc->op) ||
-                !isValidIndex(desc->newIndex, desc->op))
+                !isValidIndex(desc->oldIndex, desc->op))
                 return false;
 
             return true;

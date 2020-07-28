@@ -29,7 +29,7 @@ LONG WINAPI UnhandledExceptFilter(PEXCEPTION_POINTERS  exceptionInfo)
 
 #endif
 
-constexpr size_t sz = 100'000;
+constexpr size_t sz = 1'000'000;
 
 static mtbase::task_t task[sz];
 static mtbase::task_wait_free_deque<sz> deq{ std::pmr::get_default_resource() };
@@ -48,14 +48,13 @@ void only_push_back(int threadId, int idxBegin, int idxEnd)
     {
         try
         {
-            deq.push_back(&task[i]);
+            bool result = deq.push_back(&task[i]);
+            fmt::print("thread {} {} task {}\n", threadId, result ? "finish" : "error", i);
         }
         catch (std::exception e)
         {
             throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
         }
-
-        fmt::print("thread {} finish task {}\n", threadId, i);
     }
 }
 
@@ -69,7 +68,7 @@ void test_thread_n(int n, void(*f)(int, int, int))
         t.emplace_back(std::thread{ [i, m, f]()
             {
                 fmt::print("Thread {} warm up begin\n", i);
-                warmup();
+                //warmup();
                 fmt::print("Thread {} warm up end\n", i);
                 f(i, i * m, (i + 1) * m);
             } });
@@ -102,7 +101,7 @@ int main()
     SetUnhandledExceptionFilter(UnhandledExceptFilter);
 #endif
 
-    test_threads_to_n(3, only_push_back);
+    test_threads_to_n(4, only_push_back);
 
     return 0;
 }
