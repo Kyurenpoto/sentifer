@@ -122,6 +122,9 @@ namespace mtbase
         virtual bool isValidIndex(index_t* const idx, OP op)
             const noexcept = 0;
         [[nodiscard]]
+        virtual bool isValidDesc(descriptor* const desc)
+            const noexcept = 0;
+        [[nodiscard]]
         virtual std::atomic<task_t*>& getTask(size_t idx) = 0;
 
     private:
@@ -250,6 +253,9 @@ namespace mtbase
         bool isValidIndex(index_t* const idx, OP op)
             const noexcept override
         {
+            if (idx->front >= REAL_SIZE || idx->back >= REAL_SIZE)
+                return false;
+
             switch (op)
             {
             case OP::PUSH_FRONT:
@@ -261,6 +267,22 @@ namespace mtbase
             default:
                 return false;
             }
+        }
+
+        [[nodiscard]]
+        bool isValidDesc(descriptor* const desc)
+            const noexcept override
+        {
+            if (desc == nullptr)
+                return false;
+
+            if (*reinterpret_cast<const size_t*>(&desc->phase) >= 3 ||
+                *reinterpret_cast<const size_t*>(&desc->op) >= 5 ||
+                !isValidIndex(desc->oldIndex, desc->op) ||
+                !isValidIndex(desc->newIndex, desc->op))
+                return false;
+
+            return true;
         }
 
         [[nodiscard]]

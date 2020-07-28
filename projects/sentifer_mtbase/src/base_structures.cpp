@@ -163,8 +163,8 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
         }
     };
     descriptor* desc = new_desc(&descVal);
-
-    applyDesc(desc);
+    if (isValidDesc(desc))
+        applyDesc(desc);
 
     releaseProgress(desc);
 
@@ -228,8 +228,9 @@ void task_storage::applyDesc(descriptor*& desc)
     do
     {
         descriptor* helpDesc = registered.load(std::memory_order_acquire);
-        if (helpDesc != nullptr)
-            help_registered(helpDesc);
+        if (helpDesc == nullptr)
+            break;
+        help_registered(helpDesc);
     } while (!trySetProgress(desc));
 
     for (size_t i = 0; i < MAX_RETRY; ++i)
@@ -241,6 +242,9 @@ void task_storage::applyDesc(descriptor*& desc)
 
 bool task_storage::fast_path(descriptor*& desc)
 {
+    if (!isValidDesc(desc))
+        return false;
+
     if (!tryCommit(desc))
         return false;
 
@@ -256,6 +260,9 @@ void task_storage::slow_path(descriptor*& desc)
         descriptor* oldDesc = nullptr;
         if (tryRegister(oldDesc, desc))
             break;
+
+        if (oldDesc == nullptr)
+            continue;
 
         descriptor* trouble = copy_desc(oldDesc);
         help_registered(trouble);
@@ -275,6 +282,9 @@ void task_storage::help_registered_progress(descriptor*& desc)
 {
     while (true)
     {
+        if (!isValidDesc(desc))
+            return;
+
         if (desc->phase != descriptor::PHASE::RESERVE)
             return;
 
@@ -285,16 +295,15 @@ void task_storage::help_registered_progress(descriptor*& desc)
 
 void task_storage::help_registered_complete(descriptor*& desc)
 {
+    if (!isValidDesc(desc))
+        return;
+
     if (desc->phase == descriptor::PHASE::FAIL)
         return;
 
-    while (desc->phase != descriptor::PHASE::COMPLETE)
-    {
-        descriptor* oldDesc = desc;
-        descriptor completed = oldDesc->completed();
-        desc = new_desc(&completed);
-        renewRegistered(oldDesc, desc);
-    }
+    descriptor completed = desc->completed();
+    descriptor* newDesc = new_desc(&completed);
+    renewRegistered(desc, newDesc);
 }
 
 [[nodiscard]]
@@ -359,7 +368,8 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
     if (isValidIndex(&oldIndex, oldDesc->op))
     {
         index_t newIndex = moveIndex(&oldIndex, oldDesc->op);
-        descriptor rollbacked = oldDesc->rollbacked(&oldIndex, &newIndex,
+        descriptor rollbacked = oldDesc->rollbacked(
+            new_index(&oldIndex), new_index(&newIndex),
             getTask(getTargetIndex(&oldIndex, oldDesc->op)));
         desc = new_desc(&rollbacked);
     }
@@ -482,6 +492,7 @@ bool task_storage::tryRegister(
     if (origin == nullptr && expected != nullptr)
     {
         expected = nullptr;
+
         delete_desc(copied);
         delete_desc(originCopied);
 
