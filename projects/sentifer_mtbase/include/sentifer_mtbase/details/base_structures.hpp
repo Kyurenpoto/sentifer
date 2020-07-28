@@ -46,12 +46,14 @@ namespace mtbase
             [[nodiscard]]
             descriptor copied(
                 index_t* const oldIndexLoad,
-                index_t* const newIndexLoad)
+                index_t* const newIndexLoad,
+                task_t* const oldTaskLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor rollbacked(
                 index_t* const oldIndexLoad,
-                index_t* const newIndexLoad)
+                index_t* const newIndexLoad,
+                task_t* const oldTaskLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor completed()

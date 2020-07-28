@@ -7,14 +7,15 @@ using namespace mtbase;
 [[nodiscard]]
 task_storage::descriptor task_storage::descriptor::copied(
     index_t* const oldIndexLoad,
-    index_t* const newIndexLoad)
+    index_t* const newIndexLoad,
+    task_t* const oldTaskLoad)
     const noexcept
 {
     return descriptor
     {
         .phase = phase,
         .op = op,
-        .oldTask = oldTask,
+        .oldTask = oldTaskLoad,
         .newTask = newTask,
         .oldIndex = oldIndexLoad,
         .newIndex = newIndexLoad
@@ -24,14 +25,15 @@ task_storage::descriptor task_storage::descriptor::copied(
 [[nodiscard]]
 task_storage::descriptor task_storage::descriptor::rollbacked(
     index_t* const oldIndexLoad,
-    index_t* const newIndexLoad)
+    index_t* const newIndexLoad,
+    task_t* const oldTaskLoad)
     const noexcept
 {
     return descriptor
     {
         .phase = descriptor::PHASE::RESERVE,
         .op = op,
-        .oldTask = oldTask,
+        .oldTask = oldTaskLoad,
         .newTask = newTask,
         .oldIndex = oldIndexLoad,
         .newIndex = newIndexLoad
@@ -202,8 +204,10 @@ task_storage::descriptor* task_storage::copy_desc(descriptor* const desc)
     if (desc == nullptr)
         return nullptr;
 
-    descriptor copied =
-        desc->copied(new_index(desc->oldIndex), new_index(desc->newIndex));
+    descriptor copied = desc->copied(
+        new_index(desc->oldIndex),
+        new_index(desc->newIndex),
+        getElementRef(desc->oldIndex, desc->op));
 
     return isValidDesc(&copied) ? new_desc(&copied) : nullptr;
 }
@@ -359,8 +363,10 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
     if (isValidIndex(&oldIndex, oldDesc->op))
     {
         index_t newIndex = moveIndex(&oldIndex, oldDesc->op);
-        descriptor rollbacked =
-            oldDesc->rollbacked(new_index(&oldIndex), new_index(&newIndex));
+        descriptor rollbacked = oldDesc->rollbacked(
+            new_index(&oldIndex),
+            new_index(&newIndex),
+            getElementRef(&oldIndex, oldDesc->op));
         desc = new_desc(&rollbacked);
     }
     else
