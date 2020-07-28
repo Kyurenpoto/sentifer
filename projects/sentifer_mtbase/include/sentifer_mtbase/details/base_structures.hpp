@@ -110,10 +110,10 @@ namespace mtbase
         void delete_desc(descriptor* const desc);
 
         [[nodiscard]]
-        virtual index_t moveIndex(index_t* const origin, OP op)
-            const noexcept = 0;
+        virtual std::atomic<task_t*>& getElementRef(index_t* const idx, OP op) = 0;
+
         [[nodiscard]]
-        virtual size_t getTargetIndex(index_t* const idx, OP op)
+        virtual index_t moveIndex(index_t* const origin, OP op)
             const noexcept = 0;
         [[nodiscard]]
         virtual bool isValidIndex(index_t* const idx, OP op)
@@ -121,8 +121,6 @@ namespace mtbase
         [[nodiscard]]
         virtual bool isValidDesc(descriptor* const desc)
             const noexcept = 0;
-        [[nodiscard]]
-        virtual std::atomic<task_t*>& getTask(size_t idx) = 0;
 
     private:
         void applyDesc(descriptor*& desc);
@@ -193,6 +191,13 @@ namespace mtbase
 
     protected:
         [[nodiscard]]
+        std::atomic<task_t*>& getElementRef(index_t* const idx, OP op)
+            override
+        {
+            return tasks[getTargetIndex(idx, op)];
+        }
+
+        [[nodiscard]]
         index_t moveIndex(index_t* const origin, OP op)
             const noexcept override
         {
@@ -224,25 +229,6 @@ namespace mtbase
                 };
             default:
                 return index_t{};
-            }
-        }
-
-        [[nodiscard]]
-        size_t getTargetIndex(index_t* const idx, OP op)
-            const noexcept override
-        {
-            switch (op)
-            {
-            case OP::PUSH_FRONT:
-                return idx->front;
-            case OP::PUSH_BACK:
-                return idx->back;
-            case OP::POP_FRONT:
-                return (idx->front + 1) % REAL_SIZE;
-            case OP::POP_BACK:
-                return (idx->back + REAL_SIZE - 1) % REAL_SIZE;
-            default:
-                return 0;
             }
         }
 
@@ -282,11 +268,24 @@ namespace mtbase
             return true;
         }
 
+    private:
         [[nodiscard]]
-        std::atomic<task_t*>& getTask(size_t idx)
-            override
+        size_t getTargetIndex(index_t* const idx, OP op)
+            const noexcept
         {
-            return tasks[idx];
+            switch (op)
+            {
+            case OP::PUSH_FRONT:
+                return idx->front;
+            case OP::PUSH_BACK:
+                return idx->back;
+            case OP::POP_FRONT:
+                return (idx->front + 1) % REAL_SIZE;
+            case OP::POP_BACK:
+                return (idx->back + REAL_SIZE - 1) % REAL_SIZE;
+            default:
+                return 0;
+            }
         }
 
     private:

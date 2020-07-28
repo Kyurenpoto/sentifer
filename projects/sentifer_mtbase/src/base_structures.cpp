@@ -141,7 +141,7 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
         return nullptr;
 
     index_t newIndex = moveIndex(&oldIndex, op);
-    std::atomic<task_t*>& target = getTask(getTargetIndex(&oldIndex, op));
+    std::atomic<task_t*>& target = getElementRef(&oldIndex, op);
 
     descriptor descVal
     {
@@ -343,8 +343,7 @@ bool task_storage::tryCommitWithRegistered(descriptor*& desc)
 [[nodiscard]]
 task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 {
-    std::atomic<task_t*>& target =
-        getTask(getTargetIndex(desc->oldIndex, desc->op));
+    std::atomic<task_t*>& target = getElementRef(desc->oldIndex, desc->op);
 
     target.store(desc->oldTask, std::memory_order_release);
 
@@ -436,8 +435,7 @@ bool task_storage::tryCommitTask(descriptor* const desc)
     noexcept
 {
     task_t* oldTask = desc->oldTask;
-    std::atomic<task_t*>& target =
-        getTask(getTargetIndex(desc->oldIndex, desc->op));
+    std::atomic<task_t*>& target = getElementRef(desc->oldIndex, desc->op);
 
     return tryEfficientCAS(target, oldTask, desc->newTask);
 }
