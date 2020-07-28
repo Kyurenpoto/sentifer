@@ -7,15 +7,13 @@ using namespace mtbase;
 [[nodiscard]]
 task_storage::descriptor task_storage::descriptor::copied(
     index_t* const oldIndexLoad,
-    index_t* const newIndexLoad,
-    std::atomic<task_t*>& targetLoad)
+    index_t* const newIndexLoad)
     const noexcept
 {
     return descriptor
     {
         .phase = phase,
         .op = op,
-        .target = targetLoad,
         .oldTask = oldTask,
         .newTask = newTask,
         .oldIndex = oldIndexLoad,
@@ -26,15 +24,13 @@ task_storage::descriptor task_storage::descriptor::copied(
 [[nodiscard]]
 task_storage::descriptor task_storage::descriptor::rollbacked(
     index_t* const oldIndexLoad,
-    index_t* const newIndexLoad,
-    std::atomic<task_t*>& targetLoad)
+    index_t* const newIndexLoad)
     const noexcept
 {
     return descriptor
     {
         .phase = descriptor::PHASE::RESERVE,
         .op = op,
-        .target = targetLoad,
         .oldTask = oldTask,
         .newTask = newTask,
         .oldIndex = oldIndexLoad,
@@ -49,8 +45,7 @@ task_storage::descriptor task_storage::descriptor::completed()
     return descriptor
     {
         .phase = descriptor::PHASE::COMPLETE,
-        .op = op,
-        .target = target
+        .op = op
     };
 }
 
@@ -61,8 +56,7 @@ task_storage::descriptor task_storage::descriptor::failed()
     return descriptor
     {
         .phase = descriptor::PHASE::FAIL,
-        .op = op,
-        .target = target
+        .op = op
     };
 }
 
@@ -155,7 +149,6 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
         {
             .phase = descriptor::PHASE::RESERVE,
             .op = op,
-            .target = target,
             .oldTask = target.load(std::memory_order_acquire),
             .newTask = task,
             .oldIndex = new_index(&oldIndex),
@@ -209,13 +202,8 @@ task_storage::descriptor* task_storage::copy_desc(descriptor* const desc)
     if (desc == nullptr)
         return nullptr;
 
-    descriptor copied
-    {
-        desc->copied(
-        new_index(desc->oldIndex),
-        new_index(desc->newIndex),
-        getTask(getTargetIndex(desc->oldIndex, desc->op)))
-    };
+    descriptor copied =
+        desc->copied(new_index(desc->oldIndex), new_index(desc->newIndex));
 
     return isValidDesc(&copied) ? new_desc(&copied) : nullptr;
 }
@@ -355,7 +343,10 @@ bool task_storage::tryCommitWithRegistered(descriptor*& desc)
 [[nodiscard]]
 task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 {
-    desc->target.store(desc->oldTask, std::memory_order_release);
+    std::atomic<task_t*>& target =
+        getTask(getTargetIndex(desc->oldIndex, desc->op));
+
+    target.store(desc->oldTask, std::memory_order_release);
 
     return refreshIndex(desc);
 }
@@ -369,9 +360,8 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
     if (isValidIndex(&oldIndex, oldDesc->op))
     {
         index_t newIndex = moveIndex(&oldIndex, oldDesc->op);
-        descriptor rollbacked = oldDesc->rollbacked(
-            new_index(&oldIndex), new_index(&newIndex),
-            getTask(getTargetIndex(&oldIndex, oldDesc->op)));
+        descriptor rollbacked =
+            oldDesc->rollbacked(new_index(&oldIndex), new_index(&newIndex));
         desc = new_desc(&rollbacked);
     }
     else
@@ -446,8 +436,10 @@ bool task_storage::tryCommitTask(descriptor* const desc)
     noexcept
 {
     task_t* oldTask = desc->oldTask;
+    std::atomic<task_t*>& target =
+        getTask(getTargetIndex(desc->oldIndex, desc->op));
 
-    return tryEfficientCAS(desc->target, oldTask, desc->newTask);
+    return tryEfficientCAS(target, oldTask, desc->newTask);
 }
 
 [[nodiscard]]
@@ -495,7 +487,6 @@ bool task_storage::tryRegister(
         (expected == nullptr ||
             originCopied->phase != expected->phase ||
             originCopied->op != expected->op ||
-            originCopied->target != expected->target ||
             originCopied->oldIndex != expected->oldIndex ||
             originCopied->newTask != expected->newTask))
     {

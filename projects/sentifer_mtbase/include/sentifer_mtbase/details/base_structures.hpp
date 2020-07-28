@@ -46,14 +46,12 @@ namespace mtbase
             [[nodiscard]]
             descriptor copied(
                 index_t* const oldIndexLoad,
-                index_t* const newIndexLoad,
-                std::atomic<task_t*>& targetLoad)
+                index_t* const newIndexLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor rollbacked(
                 index_t* const oldIndexLoad,
-                index_t* const newIndexLoad,
-                std::atomic<task_t*>& targetLoad)
+                index_t* const newIndexLoad)
                 const noexcept;
             [[nodiscard]]
             descriptor completed()
@@ -65,7 +63,6 @@ namespace mtbase
         public:
             const PHASE phase{ PHASE::RESERVE };
             const OP op{ OP::PUSH_FRONT };
-            std::atomic<task_t*>& target;
             task_t* const oldTask = nullptr;
             task_t* const newTask = nullptr;
             index_t* const oldIndex = nullptr;
