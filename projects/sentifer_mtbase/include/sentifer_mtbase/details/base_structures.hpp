@@ -131,9 +131,9 @@ namespace mtbase
         void applyDesc(descriptor*& desc);
         bool fast_path(descriptor*& desc);
         void slow_path(descriptor*& desc);
-        void help_registered(descriptor*& desc);
-        void help_registered_progress(descriptor*& desc);
-        void help_registered_complete(descriptor*& desc);
+        void helpRegistered(descriptor*& desc);
+        void helpRegisteredProgress(descriptor*& desc);
+        void helpRegisteredComplete(descriptor*& desc);
         [[nodiscard]]
         bool tryCommit(descriptor*& desc);
         [[nodiscard]]

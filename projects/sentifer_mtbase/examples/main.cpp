@@ -29,7 +29,7 @@ LONG WINAPI UnhandledExceptFilter(PEXCEPTION_POINTERS  exceptionInfo)
 
 #endif
 
-constexpr size_t sz = 10'000;
+constexpr size_t sz = 100'000;
 
 static mtbase::task_t task[sz];
 static mtbase::task_wait_free_deque<sz> deq{ std::pmr::get_default_resource() };
