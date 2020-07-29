@@ -6,7 +6,7 @@
 
 #include "sentifer_mtbase/mtbase.h"
 
-constexpr size_t sz = 1'000'000;
+constexpr size_t sz = 10'000'000;
 
 static mtbase::task_t task[sz];
 static mtbase::task_wait_free_deque<sz> deq{ std::pmr::get_default_resource() };
@@ -18,6 +18,22 @@ void only_push_back(int threadId, int idxBegin, int idxEnd)
         try
         {
             bool result = deq.push_back(&task[i]);
+            //fmt::print("thread {} {} task {}\n", threadId, result ? "finish" : "error", i);
+        }
+        catch (std::exception e)
+        {
+            throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
+        }
+    }
+}
+
+void only_push_front(int threadId, int idxBegin, int idxEnd)
+{
+    for (int i = idxBegin; i < idxEnd; ++i)
+    {
+        try
+        {
+            bool result = deq.push_front(&task[i]);
             //fmt::print("thread {} {} task {}\n", threadId, result ? "finish" : "error", i);
         }
         catch (std::exception e)
@@ -68,7 +84,12 @@ int main()
     while (deq.pop_back() != nullptr);
     fmt::print("warm up end\n");
 
-    test_threads_to_n(4, only_push_back);
+    for (int i = 0; i < 4; ++i)
+    {
+        fmt::print("only_push_front begin\n");
+        test_threads_to_n(4, only_push_front);
+        fmt::print("only_push_front end\n");
+    }
 
     return 0;
 }
