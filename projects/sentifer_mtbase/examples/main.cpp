@@ -9,23 +9,8 @@
 constexpr size_t sz = 10'000'000;
 
 static mtbase::task_t task[sz];
-static mtbase::task_wait_free_deque<sz> deq{ std::pmr::get_default_resource() };
-
-void only_push_back(int threadId, int idxBegin, int idxEnd)
-{
-    for (int i = idxBegin; i < idxEnd; ++i)
-    {
-        try
-        {
-            bool result = deq.push_back(&task[i]);
-            //fmt::print("thread {} {} task {}\n", threadId, result ? "finish" : "error", i);
-        }
-        catch (std::exception e)
-        {
-            throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
-        }
-    }
-}
+static std::pmr::synchronized_pool_resource res;
+static mtbase::task_wait_free_deque<sz> deq{ &res };
 
 void only_push_front(int threadId, int idxBegin, int idxEnd)
 {
@@ -34,7 +19,51 @@ void only_push_front(int threadId, int idxBegin, int idxEnd)
         try
         {
             bool result = deq.push_front(&task[i]);
-            //fmt::print("thread {} {} task {}\n", threadId, result ? "finish" : "error", i);
+        }
+        catch (std::exception e)
+        {
+            throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
+        }
+    }
+}
+
+void only_push_back(int threadId, int idxBegin, int idxEnd)
+{
+    for (int i = idxBegin; i < idxEnd; ++i)
+    {
+        try
+        {
+            bool result = deq.push_back(&task[i]);
+        }
+        catch (std::exception e)
+        {
+            throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
+        }
+    }
+}
+
+void only_pop_front(int threadId, int idxBegin, int idxEnd)
+{
+    for (int i = idxBegin; i < idxEnd; ++i)
+    {
+        try
+        {
+            mtbase::task_t* result = deq.pop_front();
+        }
+        catch (std::exception e)
+        {
+            throw std::exception{ fmt::format("Exception occured in thread {}, task {}", threadId, i).c_str() };
+        }
+    }
+}
+
+void only_pop_back(int threadId, int idxBegin, int idxEnd)
+{
+    for (int i = idxBegin; i < idxEnd; ++i)
+    {
+        try
+        {
+            mtbase::task_t* result = deq.pop_back();
         }
         catch (std::exception e)
         {
@@ -59,11 +88,29 @@ void test_thread_n(int n, void(*f)(int, int, int))
         t[i].join();
 }
 
-void test_threads_to_n(int n, void(*f)(int, int, int))
+void fullDeq()
+{
+    for (int i = 0; i < sz; ++i)
+    {
+        bool result = deq.push_front(&task[i]);
+    }
+}
+
+void emptyDeq()
+{
+    while (deq.pop_back() != nullptr);
+}
+
+void identityDeq()
+{
+
+}
+
+void test_threads_to_n(int n, void(*f)(int, int, int), void (*post)())
 {
     for (int i = 1; i <= n; ++i)
     {
-        fmt::print("{} thread only push_back task...\n", i);
+        fmt::print("{} thread only task...\n", i);
 
         std::chrono::nanoseconds begin = std::chrono::steady_clock::now().time_since_epoch();
 
@@ -73,7 +120,7 @@ void test_threads_to_n(int n, void(*f)(int, int, int))
 
         fmt::print("Complete: {}ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count());
 
-        while (deq.pop_back() != nullptr);
+        post();
     }
 }
 
@@ -81,15 +128,24 @@ int main()
 {
     fmt::print("warm up begin\n");
     test_thread_n(1, only_push_back);
-    while (deq.pop_back() != nullptr);
+    emptyDeq();
     fmt::print("warm up end\n");
 
-    for (int i = 0; i < 4; ++i)
-    {
-        fmt::print("only_push_front begin\n");
-        test_threads_to_n(4, only_push_front);
-        fmt::print("only_push_front end\n");
-    }
+    fmt::print("only_push_front begin\n");
+    test_threads_to_n(4, only_push_front, emptyDeq);
+    fmt::print("only_push_front end\n");
+
+    fmt::print("only_push_back begin\n");
+    test_threads_to_n(4, only_push_back, identityDeq);
+    fmt::print("only_push_back end\n");
+
+    fmt::print("only_pop_front begin\n");
+    test_threads_to_n(4, only_pop_front, fullDeq);
+    fmt::print("only_pop_front end\n");
+
+    fmt::print("only_pop_back begin\n");
+    test_threads_to_n(4, only_pop_back, identityDeq);
+    fmt::print("only_pop_back end\n");
 
     return 0;
 }
