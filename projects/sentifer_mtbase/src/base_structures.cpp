@@ -233,9 +233,6 @@ void task_storage::applyDesc(descriptor*& desc)
 
 bool task_storage::fast_path(descriptor*& desc)
 {
-    if (!isValidDesc(desc))
-        return false;
-
     if (!tryCommit(desc))
         return false;
 
@@ -246,9 +243,6 @@ bool task_storage::fast_path(descriptor*& desc)
 
 void task_storage::slow_path(descriptor*& desc)
 {
-    if (!isValidDesc(desc))
-        return;
-
     while (true)
     {
         descriptor* oldDesc = nullptr;
@@ -260,48 +254,15 @@ void task_storage::slow_path(descriptor*& desc)
     }
 
     helpRegistered(desc);
-
-    if (desc == nullptr)
-        return;
 }
 
 void task_storage::helpRegistered(descriptor*& desc)
 {
-    if (desc == nullptr)
-        return;
+    while (desc->phase == descriptor::PHASE::RESERVE &&
+        !tryCommitWithRegistered(desc));
 
-    if (desc->phase != descriptor::PHASE::RESERVE)
-        return;
-
-    helpRegisteredProgress(desc);
-    helpRegisteredComplete(desc);
-}
-
-void task_storage::helpRegisteredProgress(descriptor*& desc)
-{
-    while (true)
+    while (desc->phase == descriptor::PHASE::RESERVE)
     {
-        if (!isValidDesc(desc))
-            return;
-
-        if (desc->phase != descriptor::PHASE::RESERVE)
-            return;
-
-        if (tryCommitWithRegistered(desc))
-            return;
-    }
-}
-
-void task_storage::helpRegisteredComplete(descriptor*& desc)
-{
-    while (true)
-    {
-        if (!isValidDesc(desc))
-            return;
-
-        if (desc->phase != descriptor::PHASE::RESERVE)
-            return;
-
         descriptor* oldDesc = desc;
         descriptor completed = desc->completed();
         desc = new_desc(completed);
@@ -357,7 +318,6 @@ bool task_storage::tryCommitWithRegistered(descriptor*& desc)
 task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 {
     std::atomic<task_t*>& target = getElementRef(desc->oldIndex, desc->op);
-
     target.store(desc->oldTask, std::memory_order_release);
 
     return refreshIndex(desc);
@@ -367,7 +327,6 @@ task_storage::descriptor* task_storage::rollbackTask(descriptor*& desc)
 task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
 {
     descriptor* oldDesc = desc;
-
     index_t oldIndex = *(index.load(std::memory_order_acquire));
     if (isValidIndex(oldIndex, oldDesc->op))
     {
@@ -382,6 +341,7 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
         descriptor failed = oldDesc->failed();
         desc = new_desc(failed);
     }
+
     return oldDesc;
 }
 
@@ -459,8 +419,7 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
 {
     index_t* origin = index.load(std::memory_order_acquire);
     index_t originCopied = *origin;
-    if (originCopied.front != desc->oldIndex.front ||
-        originCopied.back != desc->oldIndex.back)
+    if (originCopied != desc->oldIndex)
         return false;
 
     index_t* newIndex = new_index(desc->newIndex);
@@ -496,12 +455,7 @@ bool task_storage::tryRegister(
     }
 
     if (origin != nullptr &&
-        (expected == nullptr ||
-            originCopied->phase != expected->phase ||
-            originCopied->op != expected->op ||
-            originCopied->oldIndex.front != expected->oldIndex.front ||
-            originCopied->oldIndex.back != expected->oldIndex.back ||
-            originCopied->newTask != expected->newTask))
+        (expected == nullptr || expected != originCopied))
     {
         expected = originCopied;
 

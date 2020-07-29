@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <array>
+#include <compare>
 
 #include "memory_managers.hpp"
 
@@ -28,6 +29,8 @@ namespace mtbase
 
         struct index_t
         {
+            auto operator<=> (const index_t&) const = default;
+
             const size_t front = 0;
             const size_t back = 1;
         };
@@ -41,6 +44,9 @@ namespace mtbase
                 COMPLETE,
                 FAIL
             };
+
+        public:
+            auto operator<=> (const descriptor&) const = default;
 
         public:
             [[nodiscard]]
@@ -131,8 +137,6 @@ namespace mtbase
         bool fast_path(descriptor*& desc);
         void slow_path(descriptor*& desc);
         void helpRegistered(descriptor*& desc);
-        void helpRegisteredProgress(descriptor*& desc);
-        void helpRegisteredComplete(descriptor*& desc);
         [[nodiscard]]
         bool tryCommit(descriptor*& desc);
         [[nodiscard]]
