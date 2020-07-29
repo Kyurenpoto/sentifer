@@ -157,7 +157,7 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
     descriptor* desc = new_desc(descVal);
     applyDesc(desc);
     
-    if (isValidDesc(desc))
+    if (desc != nullptr)
         releaseProgress(desc);
 
     return desc;
@@ -202,7 +202,7 @@ task_storage::descriptor* task_storage::copy_desc(descriptor* const desc)
         desc->copied(desc->oldIndex, desc->newIndex,
         getElementRef(desc->oldIndex, desc->op));
 
-    return isValidDesc(&copied) ? new_desc(copied) : nullptr;
+    return new_desc(copied);
 }
 
 void task_storage::delete_desc(descriptor* const desc)
@@ -217,8 +217,13 @@ void task_storage::applyDesc(descriptor*& desc)
     {
         descriptor* helpDesc = nullptr;
         tryRegister(helpDesc, nullptr);
-        if (!isValidDesc(helpDesc))
+        if (helpDesc == nullptr ||
+            helpDesc->phase != descriptor::PHASE::RESERVE)
+        {
+            destroyDesc(helpDesc);
+
             break;
+        }
 
         helpRegistered(helpDesc);
         destroyDesc(helpDesc);
@@ -443,7 +448,7 @@ bool task_storage::tryRegister(
     {
         origin = registered.load(std::memory_order_acquire);
         originCopied = copy_desc(origin);
-    } while (origin != nullptr && !isValidDesc(originCopied));
+    } while (origin != nullptr && originCopied == nullptr);
 
     if (origin == nullptr && expected != nullptr)
     {

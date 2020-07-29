@@ -128,9 +128,6 @@ namespace mtbase
         [[nodiscard]]
         virtual bool isValidIndex(const index_t& idx, OP op)
             const noexcept = 0;
-        [[nodiscard]]
-        virtual bool isValidDesc(descriptor* const desc)
-            const noexcept = 0;
 
     private:
         void applyDesc(descriptor*& desc);
@@ -258,21 +255,6 @@ namespace mtbase
             default:
                 return false;
             }
-        }
-
-        [[nodiscard]]
-        bool isValidDesc(descriptor* const desc)
-            const noexcept override
-        {
-            if (desc == nullptr)
-                return false;
-
-            if (*reinterpret_cast<const size_t*>(&desc->phase) >= 3 ||
-                *reinterpret_cast<const size_t*>(&desc->op) >= 5 ||
-                !isValidIndex(desc->oldIndex, desc->op))
-                return false;
-
-            return true;
         }
 
     private:
