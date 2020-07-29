@@ -47,7 +47,8 @@ task_storage::descriptor task_storage::descriptor::completed()
     return descriptor
     {
         .phase = descriptor::PHASE::COMPLETE,
-        .op = op
+        .op = op,
+        .oldTask = oldTask
     };
 }
 
@@ -58,7 +59,8 @@ task_storage::descriptor task_storage::descriptor::failed()
     return descriptor
     {
         .phase = descriptor::PHASE::FAIL,
-        .op = op
+        .op = op,
+        .oldTask = oldTask
     };
 }
 
