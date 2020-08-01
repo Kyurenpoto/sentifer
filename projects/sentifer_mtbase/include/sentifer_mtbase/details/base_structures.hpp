@@ -199,7 +199,19 @@ namespace mtbase
         std::atomic<task_t*>& getElementRef(const index_t& idx, OP op)
             override
         {
-            return tasks[getTargetIndex(idx, op)];
+            switch (op)
+            {
+            case OP::PUSH_FRONT:
+                return tasks[idx.front];
+            case OP::PUSH_BACK:
+                return tasks[idx.back];
+            case OP::POP_FRONT:
+                return tasks[(idx.front + 1) % REAL_SIZE];
+            case OP::POP_BACK:
+                return tasks[(idx.back + REAL_SIZE - 1) % REAL_SIZE];
+            default:
+                return tasks[0];
+            }
         }
 
         [[nodiscard]]
@@ -247,33 +259,13 @@ namespace mtbase
             switch (op)
             {
             case OP::PUSH_FRONT:
-            case OP::POP_BACK:
-                return (idx.back + REAL_SIZE - idx.front) % REAL_SIZE >= 2;
             case OP::PUSH_BACK:
+                return (idx.front + REAL_SIZE - idx.back) % REAL_SIZE != 1;
             case OP::POP_FRONT:
-                return (idx.front + REAL_SIZE - idx.back) % REAL_SIZE >= 2;
+            case OP::POP_BACK:
+                return (idx.back + REAL_SIZE - idx.front) % REAL_SIZE != 1;
             default:
                 return false;
-            }
-        }
-
-    private:
-        [[nodiscard]]
-        size_t getTargetIndex(const index_t& idx, OP op)
-            const noexcept
-        {
-            switch (op)
-            {
-            case OP::PUSH_FRONT:
-                return idx.front;
-            case OP::PUSH_BACK:
-                return idx.back;
-            case OP::POP_FRONT:
-                return (idx.front + 1) % REAL_SIZE;
-            case OP::POP_BACK:
-                return (idx.back + REAL_SIZE - 1) % REAL_SIZE;
-            default:
-                return 0;
             }
         }
 

@@ -6,7 +6,7 @@
 
 #include "sentifer_mtbase/mtbase.h"
 
-constexpr size_t SZ = 10'000'000;
+constexpr size_t SZ = 100'000;
 constexpr size_t SZ_WARM_UP = 10'000;
 
 static mtbase::task_t task[SZ];
@@ -19,7 +19,7 @@ void only_push_front(int threadId, int idxBegin, int idxEnd)
     {
         try
         {
-            bool result = deq.push_front(&task[i]);
+            while (!deq.push_front(&task[i]));
         }
         catch (std::exception e)
         {
@@ -34,7 +34,7 @@ void only_push_back(int threadId, int idxBegin, int idxEnd)
     {
         try
         {
-            bool result = deq.push_back(&task[i]);
+            while (!deq.push_back(&task[i]));
         }
         catch (std::exception e)
         {
@@ -49,7 +49,7 @@ void only_pop_front(int threadId, int idxBegin, int idxEnd)
     {
         try
         {
-            mtbase::task_t* result = deq.pop_front();
+            while (deq.pop_front() == nullptr);
         }
         catch (std::exception e)
         {
@@ -64,7 +64,7 @@ void only_pop_back(int threadId, int idxBegin, int idxEnd)
     {
         try
         {
-            mtbase::task_t* result = deq.pop_back();
+            while (deq.pop_back() == nullptr);
         }
         catch (std::exception e)
         {
@@ -93,7 +93,7 @@ void fullDeq()
 {
     for (int i = 0; i < SZ; ++i)
     {
-        bool result = deq.push_front(&task[i]);
+        bool result = deq.push_back(&task[i]);
     }
 }
 
@@ -154,19 +154,21 @@ int main()
     warmup();
 
     fmt::print("only_push_front begin\n");
-    test_threads_to_n(4, only_push_front, emptyDeq);
+    test_threads_to_n(6, only_push_front, emptyDeq);
     fmt::print("only_push_front end\n");
 
     fmt::print("only_push_back begin\n");
-    test_threads_to_n(4, only_push_back, identityDeq);
+    test_threads_to_n(6, only_push_back, emptyDeq);
     fmt::print("only_push_back end\n");
 
+    fullDeq();
+
     fmt::print("only_pop_front begin\n");
-    test_threads_to_n(4, only_pop_front, fullDeq);
+    test_threads_to_n(6, only_pop_front, fullDeq);
     fmt::print("only_pop_front end\n");
 
     fmt::print("only_pop_back begin\n");
-    test_threads_to_n(4, only_pop_back, identityDeq);
+    test_threads_to_n(6, only_pop_back, fullDeq);
     fmt::print("only_pop_back end\n");
 
     return 0;

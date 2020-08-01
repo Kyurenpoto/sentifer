@@ -219,14 +219,6 @@ void task_storage::applyDesc(descriptor*& desc)
     {
         descriptor* helpDesc = nullptr;
         tryRegister(helpDesc, nullptr);
-        if (helpDesc == nullptr ||
-            helpDesc->phase != descriptor::PHASE::RESERVE)
-        {
-            destroyDesc(helpDesc);
-
-            break;
-        }
-
         helpRegistered(helpDesc);
         destroyDesc(helpDesc);
     } while (!trySetProgress(desc));
@@ -256,8 +248,7 @@ void task_storage::slow_path(descriptor*& desc)
         if (tryRegister(oldDesc, desc))
             break;
 
-        if (oldDesc != nullptr)
-            helpRegistered(oldDesc);
+        helpRegistered(oldDesc);
     }
 
     helpRegistered(desc);
@@ -265,10 +256,12 @@ void task_storage::slow_path(descriptor*& desc)
 
 void task_storage::helpRegistered(descriptor*& desc)
 {
-    while (desc->phase == descriptor::PHASE::RESERVE &&
+    while (desc != nullptr &&
+        desc->phase == descriptor::PHASE::RESERVE &&
         !tryCommitWithRegistered(desc));
 
-    while (desc->phase == descriptor::PHASE::RESERVE)
+    while (desc != nullptr &&
+        desc->phase == descriptor::PHASE::RESERVE)
     {
         descriptor* oldDesc = desc;
         descriptor completed = desc->completed();
@@ -432,7 +425,11 @@ bool task_storage::tryCommitIndex(descriptor* const desc)
     index_t* newIndex = new_index(desc->newIndex);
 
     if (tryEfficientCAS(index, origin, newIndex))
+    {
+        delete_index(origin);
+
         return true;
+    }
 
     delete_index(newIndex);
 
@@ -462,7 +459,7 @@ bool task_storage::tryRegister(
     }
 
     if (origin != nullptr &&
-        (expected == nullptr || expected != originCopied))
+        (expected == nullptr || *expected != *originCopied))
     {
         expected = originCopied;
 
