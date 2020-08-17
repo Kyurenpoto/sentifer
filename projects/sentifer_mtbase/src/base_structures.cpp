@@ -157,10 +157,19 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
         .newIndex = newIndex
     };
     descriptor* desc = new_desc(descVal);
+    
+    do
+    {
+        descriptor* helpDesc = nullptr;
+        tryRegister(helpDesc, nullptr);
+        helpRegistered(helpDesc);
+        destroyDesc(helpDesc);
+    } while (!trySetProgress(op));
+
     applyDesc(desc);
     
     if (desc != nullptr)
-        releaseProgress(desc);
+        releaseProgress(op);
 
     return desc;
 }
@@ -215,14 +224,6 @@ void task_storage::delete_desc(descriptor* const desc)
 
 void task_storage::applyDesc(descriptor*& desc)
 {
-    do
-    {
-        descriptor* helpDesc = nullptr;
-        tryRegister(helpDesc, nullptr);
-        helpRegistered(helpDesc);
-        destroyDesc(helpDesc);
-    } while (!trySetProgress(desc));
-
     for (size_t i = 0; i < MAX_RETRY; ++i)
         if (fast_path(desc))
             return;
@@ -244,14 +245,28 @@ void task_storage::slow_path(descriptor*& desc)
 {
     while (true)
     {
-        descriptor* oldDesc = nullptr;
-        if (tryRegister(oldDesc, desc))
-            break;
+        while (true)
+        {
+            descriptor* oldDesc = nullptr;
+            if (tryRegister(oldDesc, desc))
+                break;
 
-        helpRegistered(oldDesc);
+            helpRegistered(oldDesc);
+        }
+
+        descriptor* tmp = copy_desc(desc);
+
+        helpRegistered(desc);
+        if (desc != nullptr)
+        {
+            destroyDesc(tmp);
+
+            return;
+        }
+
+        refreshIndex(tmp);
+        desc = tmp;
     }
-
-    helpRegistered(desc);
 }
 
 void task_storage::helpRegistered(descriptor*& desc)
@@ -371,19 +386,19 @@ void task_storage::renewRegistered(
 }
 
 [[nodiscard]]
-bool task_storage::trySetProgress(descriptor* const desc)
-    noexcept
+bool task_storage::trySetProgress(const OP op)
+noexcept
 {
-    std::atomic_bool& target = getTargetProgress(desc->op);
+    std::atomic_bool& target = getTargetProgress(op);
     bool oldTarget = false;
 
     return tryEfficientCAS(target, oldTarget, true);
 }
 
-void task_storage::releaseProgress(descriptor* const desc)
-    noexcept
+void task_storage::releaseProgress(const OP op)
+noexcept
 {
-    getTargetProgress(desc->op)
+    getTargetProgress(op)
         .store(false, std::memory_order_release);
 }
 

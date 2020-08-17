@@ -148,9 +148,9 @@ namespace mtbase
             descriptor*& desc);
 
         [[nodiscard]]
-        bool trySetProgress(descriptor* const desc)
+        bool trySetProgress(const OP op)
             noexcept;
-        void releaseProgress(descriptor* const desc)
+        void releaseProgress(const OP op)
             noexcept;
         [[nodiscard]]
         std::atomic_bool& getTargetProgress(const OP op)
