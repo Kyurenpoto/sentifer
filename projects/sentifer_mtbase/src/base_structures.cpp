@@ -80,7 +80,7 @@ bool tryEfficientCAS(
 #pragma region task_storage
 
 [[nodiscard]]
-bool task_storage::push_front(task_t* task)
+bool task_storage::push_front(task_t* const task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_FRONT);
 
@@ -90,11 +90,14 @@ bool task_storage::push_front(task_t* task)
     bool result = (desc->phase == descriptor::PHASE::COMPLETE);
     destroyDesc(desc);
 
+    if (result)
+        cnt.fetch_add(1);
+
     return result;
 }
 
 [[nodiscard]]
-bool task_storage::push_back(task_t* task)
+bool task_storage::push_back(task_t* const task)
 {
     descriptor* const desc = createDesc(task, OP::PUSH_BACK);
 
@@ -103,6 +106,9 @@ bool task_storage::push_back(task_t* task)
 
     bool result = (desc->phase == descriptor::PHASE::COMPLETE);
     destroyDesc(desc);
+
+    if (result)
+        cnt.fetch_add(1);
 
     return result;
 }
@@ -119,6 +125,9 @@ task_t* task_storage::pop_front()
         desc->oldTask : nullptr);
     destroyDesc(desc);
 
+    if (result != nullptr)
+        cnt.fetch_sub(1);
+
     return result;
 }
 
@@ -134,11 +143,14 @@ task_t* task_storage::pop_back()
         desc->oldTask : nullptr);
     destroyDesc(desc);
 
+    if (result != nullptr)
+        cnt.fetch_sub(1);
+
     return result;
 }
 
 [[nodiscard]]
-task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
+task_storage::descriptor* task_storage::createDesc(task_t* const task, OP op)
 {
     index_t oldIndex = *(index.load(std::memory_order_acquire));
     if (!isValidIndex(oldIndex, op))
@@ -168,8 +180,7 @@ task_storage::descriptor* task_storage::createDesc(task_t* task, OP op)
 
     applyDesc(desc);
     
-    if (desc != nullptr)
-        releaseProgress(op);
+    releaseProgress(op);
 
     return desc;
 }

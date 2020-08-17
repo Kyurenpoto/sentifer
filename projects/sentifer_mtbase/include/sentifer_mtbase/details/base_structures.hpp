@@ -96,9 +96,9 @@ namespace mtbase
 
     public:
         [[nodiscard]]
-        bool push_front(task_t* task);
+        bool push_front(task_t* const task);
         [[nodiscard]]
-        bool push_back(task_t* task);
+        bool push_back(task_t* const task);
         [[nodiscard]]
         task_t* pop_front();
         [[nodiscard]]
@@ -106,7 +106,7 @@ namespace mtbase
 
     protected:
         [[nodiscard]]
-        descriptor* createDesc(task_t* task, OP op);
+        descriptor* createDesc(task_t* const task, OP op);
         void destroyDesc(descriptor* const desc);
         [[nodiscard]]
         index_t* new_index(const index_t& idx);
@@ -169,6 +169,7 @@ namespace mtbase
     private:
         static constexpr size_t MAX_RETRY = 4;
 
+        std::atomic_size_t cnt = 0;
         std::atomic<index_t*> index;
         std::atomic<descriptor*> registered{ nullptr };
         std::atomic_bool progressFront{ false };

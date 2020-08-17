@@ -195,7 +195,7 @@ void test_threads_to_n(int n, void(*f1)(int, int, int), void(*f2)(int, int, int)
 {
     for (int i = 2; i <= n; ++i)
     {
-        for (int j = 1; j <= n - 1; ++j)
+        for (int j = 1; j <= i - 1; ++j)
         {
             fmt::print("{} thread ({}, {}) multi task...\n", i, j, i - j);
 
@@ -216,7 +216,7 @@ void test_threads_to_n_splited(int n, void(*f1)(int, int, int), void(*f2)(int, i
 {
     for (int i = 2; i <= n; ++i)
     {
-        for (int j = 1; j <= n - 1; ++j)
+        for (int j = 1; j <= i - 1; ++j)
         {
             fmt::print("{} thread ({}, {}) multi task...\n", i, j, i - j);
 
