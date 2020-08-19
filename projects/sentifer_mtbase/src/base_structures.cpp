@@ -267,16 +267,15 @@ void task_storage::slow_path(descriptor*& desc)
 
         descriptor* tmp = copy_desc(desc);
 
-        helpRegistered(desc);
-        if (desc != nullptr)
+        helpRegistered(tmp);
+        if (tmp != nullptr)
         {
-            destroyDesc(tmp);
+            destroyDesc(desc);
 
             return;
         }
 
-        refreshIndex(tmp);
-        desc = tmp;
+        refreshIndex(desc);
     }
 }
 
