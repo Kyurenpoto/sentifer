@@ -270,12 +270,12 @@ void task_storage::slow_path(descriptor*& desc)
         helpRegistered(tmp);
         if (tmp != nullptr)
         {
-            destroyDesc(desc);
+            destroyDesc(tmp);
 
             return;
         }
 
-        refreshIndex(desc);
+        delete_desc(refreshIndex(desc));
     }
 }
 
@@ -372,11 +372,9 @@ task_storage::descriptor* task_storage::refreshIndex(descriptor*& desc)
 
 void task_storage::completeDesc(descriptor*& desc)
 {
-    descriptor* const oldDesc = desc;
-
-    descriptor completed = oldDesc->completed();
-    desc = new_desc(completed);
-    delete_desc(oldDesc);
+    descriptor completed = desc->completed();
+    alloc.destroy(desc);
+    alloc.construct(desc, completed);
 }
 
 void task_storage::renewRegistered(

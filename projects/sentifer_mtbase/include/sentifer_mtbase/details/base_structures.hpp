@@ -27,7 +27,7 @@ namespace mtbase
             POP_BACK
         };
 
-        struct index_t
+        struct alignas(BASE_ALIGN * 2) index_t
         {
             auto operator<=> (const index_t&) const = default;
 
@@ -35,7 +35,7 @@ namespace mtbase
             const size_t back = 1;
         };
 
-        struct descriptor
+        struct alignas(BASE_ALIGN * 8) descriptor
         {
             enum class PHASE :
                 size_t
