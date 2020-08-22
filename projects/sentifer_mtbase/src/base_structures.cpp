@@ -247,7 +247,8 @@ bool task_storage::fast_path(descriptor*& desc)
     if (!tryCommit(desc))
         return false;
 
-    completeDesc(desc);
+    if (desc->phase == descriptor::PHASE::RESERVE)
+        completeDesc(desc);
 
     return true;
 }
@@ -491,8 +492,7 @@ bool task_storage::tryRegister(
 
     delete_desc(originCopied);
 
-    descriptor* const copied =
-        desired == nullptr ? nullptr : copy_desc(desired);
+    descriptor* const copied = copy_desc(desired);
     if (tryEfficientCAS(registered, origin, copied))
         return true;
 
