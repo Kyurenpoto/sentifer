@@ -276,7 +276,8 @@ void task_storage::slow_path(descriptor*& desc)
             return;
         }
 
-        delete_desc(refreshIndex(desc));
+        descriptor* oldDesc = refreshIndex(desc);
+        renewRegistered(oldDesc, desc);
     }
 }
 
@@ -465,13 +466,8 @@ bool task_storage::tryRegister(
     descriptor* const desired)
     noexcept
 {
-    descriptor* origin = nullptr;
-    descriptor* originCopied = nullptr;
-    do
-    {
-        origin = registered.load(std::memory_order_acquire);
-        originCopied = copy_desc(origin);
-    } while (origin != nullptr && originCopied == nullptr);
+    descriptor* origin = registered.load(std::memory_order_acquire);
+    descriptor* originCopied = copy_desc(origin);
 
     if (origin == nullptr && expected != nullptr)
     {
