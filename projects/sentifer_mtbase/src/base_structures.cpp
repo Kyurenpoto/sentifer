@@ -257,21 +257,23 @@ void task_storage::slow_path(descriptor*& desc)
 {
     while (true)
     {
-        while (true)
-        {
-            descriptor* oldDesc = nullptr;
-            if (tryRegister(oldDesc, desc))
-                break;
+        descriptor* oldDesc = nullptr;
+        if (tryRegister(oldDesc, desc))
+            break;
 
-            helpRegistered(oldDesc);
-        }
+        helpRegistered(oldDesc);
+    }
 
+    while (desc != nullptr &&
+        desc->phase == descriptor::PHASE::RESERVE)
+    {
         descriptor* tmp = copy_desc(desc);
 
         helpRegistered(tmp);
         if (tmp != nullptr)
         {
-            destroyDesc(tmp);
+            destroyDesc(desc);
+            desc = tmp;
 
             return;
         }
@@ -490,7 +492,11 @@ bool task_storage::tryRegister(
 
     descriptor* const copied = copy_desc(desired);
     if (tryEfficientCAS(registered, origin, copied))
+    {
+        delete_desc(origin);
+
         return true;
+    }
 
     delete_desc(copied);
 
