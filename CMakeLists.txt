@@ -10,6 +10,7 @@ project(sentifer VERSION 0.1.0 DESCRIPTION "Kyurenpoto's mono-repo" LANGUAGES CX
 
 # projects
 add_subdirectory(projects/sentifer_mtbase)
+add_subdirectory(projects/eskada)
 
 # submodules
 add_subdirectory(submodule/doctest)
