@@ -11,8 +11,8 @@ project(test_eskada VERSION 0.1.0 DESCRIPTION "Tests for eskada" LANGUAGES CXX)
 add_executable(test_eskada
 	"main.cpp"
 )
-target_link_libraries(test_eskada PUBLIC eskada)
-target_link_libraries(test_eskada PUBLIC doctest)
+target_link_libraries(test_eskada INTERFACE eskada)
+target_link_libraries(test_eskada PUBLIC boost::ut)
 target_include_directories(test_eskada PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>)
 set_property(TARGET test_eskada PROPERTY CXX_STANDARD_REQUIRED 20)
 set_property(TARGET test_eskada PROPERTY CXX_STANDARD 20)

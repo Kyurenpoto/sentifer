@@ -15,7 +15,11 @@ add_subdirectory(projects/eskada)
 # submodules
 add_subdirectory(submodule/doctest)
 add_subdirectory(submodule/fmt)
+add_subdirectory(submodule/ut)
 
 # dependencies
 add_dependencies(sentifer_mtbase doctest)
 add_dependencies(sentifer_mtbase fmt)
+add_dependencies(eskada doctest)
+add_dependencies(eskada fmt)
+add_dependencies(eskada boost::ut)

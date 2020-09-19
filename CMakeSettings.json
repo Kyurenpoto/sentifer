@@ -10,7 +10,7 @@
       "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": "",
-      "cmakeExecutable": "C:/Program Files/CMake/bin/cmake.exe",
+      "cmakeExecutable": "",
       "intelliSenseMode": "windows-msvc-x64",
       "variables": [],
       "enableMicrosoftCodeAnalysis": true,

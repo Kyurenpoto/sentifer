@@ -4,3 +4,6 @@
 [submodule "submodule/fmt"]
 	path = submodule/fmt
 	url = https://github.com/fmtlib/fmt.git
+[submodule "submodule/ut"]
+	path = submodule/ut
+	url = https://github.com/boost-ext/ut
