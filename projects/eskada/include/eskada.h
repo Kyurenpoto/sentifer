@@ -191,9 +191,13 @@ namespace eskada
     private:
         constexpr static size_t REAL_SIZE = MAX_SIZE + 2;
 
+    public:
+        using IndexType = EventDeqIndex<REAL_SIZE>;
+        using DescType = EventDeqDesc<Task, REAL_SIZE>;
+
     private:
-        std::atomic<EventDeqIndex<REAL_SIZE>*> index;
-        std::atomic<EventDeqDesc<Task, REAL_SIZE>*> registered = nullptr;
+        std::atomic<IndexType*> index;
+        std::atomic<DescType*> registered = nullptr;
         std::pmr::memory_resource* res;
         std::array<std::atomic<Task*>, REAL_SIZE> tasks;
 
@@ -201,25 +205,25 @@ namespace eskada
         EventDeqBase() :
             res(std::pmr::get_default_resource())
         {
-            EventDeqIndex<REAL_SIZE> initIndex;
-            EventDeqIndex<REAL_SIZE>* initIndexPtr =
-                EventDeqIndex<REAL_SIZE>::create(initIndex, res);
+            IndexType initIndex;
+            IndexType* initIndexPtr =
+                IndexType::create(initIndex, res);
 
             index.store(initIndexPtr, std::memory_order_relaxed);
         }
 
         ~EventDeqBase()
         {
-            EventDeqIndex<REAL_SIZE>* indexPtr =
+            IndexType* indexPtr =
                 index.load(std::memory_order_relaxed);
-            EventDeqIndex<REAL_SIZE>::destroy(indexPtr);
+            IndexType::destroy(indexPtr);
 
-            EventDeqDesc<Task, REAL_SIZE>* descPtr =
+            DescType* descPtr =
                 registered.load(std::memory_order_relaxed);
-            EventDeqDesc<Task, REAL_SIZE>::destroy(descPtr);
+            DescType::destroy(descPtr);
         }
 
-        bool tryCommitTask(EventDeqDesc<Task, REAL_SIZE>* const desc)
+        bool tryCommitTask(DescType* const desc)
         {
             Task* currTask = desc->oldTask;
             std::atomic<Task*>& target = tasks[desc->targetIndex(REAL_SIZE)];
@@ -230,39 +234,39 @@ namespace eskada
             return currTask == desc->newTask;
         }
 
-        void rollbackTask(EventDeqDesc<Task, REAL_SIZE>* const desc)
+        void rollbackTask(DescType* const desc)
         {
             Task* currTask = desc->newTask;
             std::atomic<Task*>& target = tasks[desc->targetIndex(REAL_SIZE)];
             target.store(desc->oldTask, std::memory_order_release);
         }
 
-        bool tryCommitIndex(EventDeqDesc<Task, REAL_SIZE>* const desc)
+        bool tryCommitIndex(DescType* const desc)
         {
-            EventDeqIndex<REAL_SIZE>* currIndex =
+            IndexType* currIndex =
                 index.load(std::memory_order_acquire);
-            EventDeqIndex<REAL_SIZE> currIndexValue = *currIndex;
+            IndexType currIndexValue = *currIndex;
             if (desc->oldIndex != currIndexValue)
                 return false;
 
-            EventDeqIndex<REAL_SIZE>* newIndex =
-                EventDeqIndex<REAL_SIZE>::create(desc->newIndex, res);
+            IndexType* newIndex =
+                IndexType::create(desc->newIndex, res);
             if (index.compare_exchange_strong(
                 currIndex, newIndex, std::memory_order_acq_rel))
             {
-                EventDeqIndex<REAL_SIZE>::destroy(currIndex, res);
+                IndexType::destroy(currIndex, res);
 
                 return true;
             }
 
-            EventDeqIndex<REAL_SIZE>::destroy(newIndex, res);
+            IndexType::destroy(newIndex, res);
 
             return false;
         }
 
         bool tryCommitDesc(
-            EventDeqDesc<Task, REAL_SIZE>*& oldDesc,
-            EventDeqDesc<Task, REAL_SIZE>* const newDesc)
+            DescType*& oldDesc,
+            DescType* const newDesc)
         {
             return registered.compare_exchange_strong(
                 oldDesc, newDesc, std::memory_order_acq_rel);
