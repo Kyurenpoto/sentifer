@@ -234,8 +234,7 @@ namespace eskada
         {
             Task* currTask = desc->newTask;
             std::atomic<Task*>& target = tasks[desc->targetIndex(REAL_SIZE)];
-            target.compare_exchange_strong(
-                currTask, desc->oldTask, std::memory_order_acq_rel);
+            target.store(desc->oldTask, std::memory_order_release);
         }
 
         bool tryCommitIndex(EventDeqDesc<Task, REAL_SIZE>* const desc)
