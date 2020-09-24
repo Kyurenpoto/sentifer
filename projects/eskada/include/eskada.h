@@ -21,10 +21,7 @@ namespace eskada
         size_t front = 0;
         size_t back = 1;
 
-        void move(
-            const EventDeqOp op,
-            const size_t maxSize,
-            EventDeqIndex& result)
+        void move(const EventDeqOp op, EventDeqIndex& result)
             const noexcept
         {
             switch (op)
@@ -32,22 +29,22 @@ namespace eskada
             case EventDeqOp::PUSH_FRONT:
             {
                 result = *this;
-                result.front = (front - 1 + maxSize) % maxSize;
+                result.front = (front - 1 + REAL_SIZE) % REAL_SIZE;
             }
             case EventDeqOp::PUSH_BACK:
             {
                 result = *this;
-                result.back = (back + 1) % maxSize;
+                result.back = (back + 1) % REAL_SIZE;
             }
             case EventDeqOp::POP_FRONT:
             {
                 result = *this;
-                result.front = (front + 1) % maxSize;
+                result.front = (front + 1) % REAL_SIZE;
             }
             case EventDeqOp::POP_BACK:
             {
                 result = *this;
-                result.back = (back - 1 + maxSize) % maxSize;
+                result.back = (back - 1 + REAL_SIZE) % REAL_SIZE;
             }
             }
         }
@@ -132,7 +129,7 @@ namespace eskada
             index.move(result.op, maxSize, result.newIndex);
         }
 
-        size_t targetIndex(const size_t maxSize)
+        size_t targetIndex()
         {
             switch (op)
             {
@@ -141,9 +138,9 @@ namespace eskada
             case EventDeqOp::PUSH_BACK:
                 return oldIndex.back;
             case EventDeqOp::POP_FRONT:
-                return (oldIndex.front + 1) % maxSize;
+                return (oldIndex.front + 1) % REAL_SIZE;
             case EventDeqOp::POP_BACK:
-                return (oldIndex.back - 1 + maxSize) % maxSize;
+                return (oldIndex.back - 1 + REAL_SIZE) % REAL_SIZE;
             }
         }
 
@@ -186,7 +183,7 @@ namespace eskada
     };
 
     template<class Task, size_t MAX_SIZE>
-    struct EventDeqBase
+    struct EventDeqRaw
     {
     private:
         constexpr static size_t REAL_SIZE = MAX_SIZE + 2;
@@ -196,10 +193,71 @@ namespace eskada
         using DescType = EventDeqDesc<Task, REAL_SIZE>;
 
     private:
-        std::atomic<IndexType*> index;
+        std::atomic<IndexType*> index = nullptr;
         std::atomic<DescType*> registered = nullptr;
+        std::array<std::atomic<Task*>, REAL_SIZE> tasks{ nullptr };
+
+    public:
+        bool tryCommitTask(size_t idx, Task*& oldTask, Task* const newTask)
+        {
+            return tasks[idx].compare_exchange_strong(
+                oldTask, newTask, std::memory_order_acq_rel);
+        }
+
+        Task* loadTask(size_t idx)
+        {
+            return tasks[idx].load(std::memory_order_acquire);
+        }
+
+        void storeTask(size_t idx, Task* task)
+        {
+            tasks[idx].store(task, std::memory_order::release);
+        }
+
+        bool tryCommitIndex(IndexType*& oldIndex, IndexType* const newIndex)
+        {
+            return index.compare_exchange_strong(
+                oldIndex, newIndex, std::memory_order_acq_rel);
+        }
+
+        IndexType* loadIndex()
+        {
+            return index.load(std::memory_order_acquire);
+        }
+
+        void storeIndex(IndexType* idx)
+        {
+            index.store(idx, std::memory_order::release);
+        }
+
+        bool tryCommitDesc(DescType*& oldDesc, DescType* const newDesc)
+        {
+            return registered.compare_exchange_strong(
+                oldDesc, newDesc, std::memory_order_acq_rel);
+        }
+
+        DescType* loadDesc()
+        {
+            return registered.load(std::memory_order_acquire);
+        }
+
+        void storeDesc(DescType* desc)
+        {
+            registered.store(desc, std::memory_order::release);
+        }
+    };
+
+    template<class Task, size_t MAX_SIZE>
+    struct EventDeqBase :
+        public EventDeqRaw<Task, MAX_SIZE>
+    {
+    private:
+        using BaseType = EventDeqRaw<Task, MAX_SIZE>;
+        using IndexType = typename BaseType::IndexType;
+        using DescType = typename BaseType::DescType;
+
+    private:
         std::pmr::memory_resource* res;
-        std::array<std::atomic<Task*>, REAL_SIZE> tasks;
 
     public:
         EventDeqBase() :
@@ -208,53 +266,43 @@ namespace eskada
             IndexType initIndex;
             IndexType* initIndexPtr =
                 IndexType::create(initIndex, res);
-
-            index.store(initIndexPtr, std::memory_order_relaxed);
+            storeIndex(initIndex);
         }
 
         ~EventDeqBase()
         {
-            IndexType* indexPtr =
-                index.load(std::memory_order_relaxed);
+            IndexType* indexPtr = loadIndex();
             IndexType::destroy(indexPtr);
 
-            DescType* descPtr =
-                registered.load(std::memory_order_relaxed);
+            DescType* descPtr = loadDesc();
             DescType::destroy(descPtr);
         }
 
         bool tryCommitTask(DescType* const desc)
         {
-            Task* currTask = desc->oldTask;
-            std::atomic<Task*>& target = tasks[desc->targetIndex(REAL_SIZE)];
-            if (target.compare_exchange_strong(
-                currTask, desc->newTask, std::memory_order_acq_rel))
-                return true;
-
-            return currTask == desc->newTask;
+            Task* oldTask = desc->oldTask;
+            
+            return tryCommitTask(desc->targetIndex(), oldTask, desc->newTask);
         }
 
         void rollbackTask(DescType* const desc)
         {
-            Task* currTask = desc->newTask;
-            std::atomic<Task*>& target = tasks[desc->targetIndex(REAL_SIZE)];
-            target.store(desc->oldTask, std::memory_order_release);
+            Task* newTask = desc->newTask;
+            storeTask(desc->targetIndex(), desc->oldTask);
         }
 
         bool tryCommitIndex(DescType* const desc)
         {
-            IndexType* currIndex =
-                index.load(std::memory_order_acquire);
-            IndexType currIndexValue = *currIndex;
-            if (desc->oldIndex != currIndexValue)
+            IndexType* oldIndex = loadIndex();
+            IndexType oldIndexValue = *oldIndex;
+            if (desc->oldIndex != oldIndexValue)
                 return false;
 
             IndexType* newIndex =
                 IndexType::create(desc->newIndex, res);
-            if (index.compare_exchange_strong(
-                currIndex, newIndex, std::memory_order_acq_rel))
+            if (tryCommitIndex(oldIndex, newIndex))
             {
-                IndexType::destroy(currIndex, res);
+                IndexType::destroy(oldIndex, res);
 
                 return true;
             }
@@ -262,14 +310,6 @@ namespace eskada
             IndexType::destroy(newIndex, res);
 
             return false;
-        }
-
-        bool tryCommitDesc(
-            DescType*& oldDesc,
-            DescType* const newDesc)
-        {
-            return registered.compare_exchange_strong(
-                oldDesc, newDesc, std::memory_order_acq_rel);
         }
     };
 }
