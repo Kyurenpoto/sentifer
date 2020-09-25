@@ -49,47 +49,11 @@ namespace eskada
             }
         }
 
+        [[nodiscard]]
         bool isValid()
             const noexcept
         {
             return front != back;
-        }
-
-        static EventDeqIndex* create(
-            const EventDeqIndex& index,
-            std::pmr::memory_resource* res)
-        {
-            try
-            {
-                EventDeqIndex* idx =
-                    static_cast<EventDeqIndex*>(res->allocate(
-                        sizeof(EventDeqIndex), alignof(EventDeqIndex)));
-                new(idx) EventDeqIndex(index);
-
-                return idx;
-            }
-            catch (...)
-            {
-                return nullptr;
-            }
-        }
-
-        static void destroy(
-            EventDeqIndex*& index,
-            std::pmr::memory_resource* res)
-        {
-            if (index == nullptr)
-                return;
-
-            try
-            {
-                index->~EventDeqIndex();
-                res->deallocate(
-                    index, sizeof(EventDeqIndex), alignof(EventDeqIndex));
-            }
-            catch (...)
-            {
-            }
         }
     };
 
@@ -141,43 +105,6 @@ namespace eskada
                 return (oldIndex.front + 1) % REAL_SIZE;
             case EventDeqOp::POP_BACK:
                 return (oldIndex.back - 1 + REAL_SIZE) % REAL_SIZE;
-            }
-        }
-
-        static EventDeqDesc* create(
-            EventDeqDesc& descriptor,
-            std::pmr::memory_resource* res)
-        {
-            try
-            {
-                EventDeqDesc* desc =
-                    static_cast<EventDeqDesc*>(res->allocate(
-                        sizeof(EventDeqDesc), alignof(EventDeqDesc)));
-                new(desc) EventDeqDesc(descriptor);
-
-                return desc;
-            }
-            catch (...)
-            {
-                return nullptr;
-            }
-        }
-
-        static void destroy(
-            EventDeqDesc*& descriptor,
-            std::pmr::memory_resource* res)
-        {
-            if (descriptor == nullptr)
-                return;
-
-            try
-            {
-                descriptor->~EventDeqDesc();
-                res->deallocate(
-                    descriptor, sizeof(EventDeqDesc), alignof(EventDeqDesc));
-            }
-            catch (...)
-            {
             }
         }
     };
@@ -251,7 +178,6 @@ namespace eskada
     struct EventDeqBase :
         public EventDeqRaw<Task, MAX_SIZE>
     {
-    private:
         using BaseType = EventDeqRaw<Task, MAX_SIZE>;
         using IndexType = typename BaseType::IndexType;
         using DescType = typename BaseType::DescType;
@@ -264,18 +190,62 @@ namespace eskada
             res(std::pmr::get_default_resource())
         {
             IndexType initIndex;
-            IndexType* initIndexPtr =
-                IndexType::create(initIndex, res);
-            storeIndex(initIndex);
+            IndexType* initIndexPtr = create(initIndex);
+            storeIndex(initIndexPtr);
         }
 
         ~EventDeqBase()
         {
             IndexType* indexPtr = loadIndex();
-            IndexType::destroy(indexPtr);
+            destroy(indexPtr);
 
             DescType* descPtr = loadDesc();
-            DescType::destroy(descPtr);
+            destroy(descPtr);
+        }
+
+        EventDeqBase(const EventDeqBase&) = delete;
+        EventDeqBase(EventDeqBase&&) = delete;
+        EventDeqBase& operator= (const EventDeqBase&) = delete;
+        EventDeqBase& operator= (EventDeqBase&&) = delete;
+
+        template<class T>
+        T* create(const T& origin)
+        {
+            if constexpr (!std::is_same_v<T, IndexType> &&
+                !std::is_same_v<T, DescType>)
+                return nullptr;
+
+            try
+            {
+                T* idx = static_cast<T*>(res->allocate(sizeof(T), alignof(T)));
+                new(idx) T(origin);
+
+                return idx;
+            }
+            catch (...)
+            {
+                return nullptr;
+            }
+        }
+
+        template<class T>
+        void destroy(T*& origin)
+        {
+            if constexpr (!std::is_same_v<T, IndexType> &&
+                !std::is_same_v<T, DescType>)
+                return;
+
+            if (origin == nullptr)
+                return;
+
+            try
+            {
+                origin->~T();
+                res->deallocate(origin, sizeof(T), alignof(T));
+            }
+            catch (...)
+            {
+            }
         }
 
         bool tryCommitTask(DescType* const desc)
@@ -298,16 +268,15 @@ namespace eskada
             if (desc->oldIndex != oldIndexValue)
                 return false;
 
-            IndexType* newIndex =
-                IndexType::create(desc->newIndex, res);
+            IndexType* newIndex = create(desc->newIndex);
             if (tryCommitIndex(oldIndex, newIndex))
             {
-                IndexType::destroy(oldIndex, res);
+                destroy(oldIndex);
 
                 return true;
             }
 
-            IndexType::destroy(newIndex, res);
+            destroy(newIndex);
 
             return false;
         }
