@@ -70,8 +70,8 @@ namespace eskada
     {
         EventDeqIndex<REAL_SIZE> oldIndex;
         EventDeqIndex<REAL_SIZE> newIndex;
-        Task* oldTask;
-        Task* newTask;
+        Task* oldTask = nullptr;
+        Task* newTask = nullptr;
         EventDeqOp op = EventDeqOp::PUSH_FRONT;
         EventDeqPhase phase = EventDeqPhase::TRYING;
 
@@ -105,6 +105,8 @@ namespace eskada
                 return (oldIndex.front + 1) % REAL_SIZE;
             case EventDeqOp::POP_BACK:
                 return (oldIndex.back - 1 + REAL_SIZE) % REAL_SIZE;
+            default:
+                return 0;
             }
         }
     };
@@ -191,15 +193,15 @@ namespace eskada
         {
             IndexType initIndex;
             IndexType* initIndexPtr = create(initIndex);
-            storeIndex(initIndexPtr);
+            this->storeIndex(initIndexPtr);
         }
 
         ~EventDeqBase()
         {
-            IndexType* indexPtr = loadIndex();
+            IndexType* indexPtr = this->loadIndex();
             destroy(indexPtr);
 
-            DescType* descPtr = loadDesc();
+            DescType* descPtr = this->loadDesc();
             destroy(descPtr);
         }
 
@@ -257,8 +259,7 @@ namespace eskada
 
         void rollbackTask(DescType* const desc)
         {
-            Task* newTask = desc->newTask;
-            storeTask(desc->targetIndex(), desc->oldTask);
+            this->storeTask(desc->targetIndex(), desc->oldTask);
         }
 
         bool tryCommitIndex(DescType* const desc)
