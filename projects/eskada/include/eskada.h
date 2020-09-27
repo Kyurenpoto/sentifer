@@ -127,7 +127,7 @@ namespace eskada
         std::array<std::atomic<Task*>, REAL_SIZE> tasks{ nullptr };
 
     public:
-        bool tryCommitTask(size_t idx, Task*& oldTask, Task* const newTask)
+        bool casTask(size_t idx, Task*& oldTask, Task* const newTask)
         {
             return tasks[idx].compare_exchange_strong(
                 oldTask, newTask, std::memory_order_acq_rel);
@@ -138,12 +138,12 @@ namespace eskada
             return tasks[idx].load(std::memory_order_acquire);
         }
 
-        void storeTask(size_t idx, Task* task)
+        void storeTask(size_t idx, Task* const task)
         {
             tasks[idx].store(task, std::memory_order::release);
         }
 
-        bool tryCommitIndex(IndexType*& oldIndex, IndexType* const newIndex)
+        bool casIndex(IndexType*& oldIndex, IndexType* const newIndex)
         {
             return index.compare_exchange_strong(
                 oldIndex, newIndex, std::memory_order_acq_rel);
@@ -154,12 +154,12 @@ namespace eskada
             return index.load(std::memory_order_acquire);
         }
 
-        void storeIndex(IndexType* idx)
+        void storeIndex(IndexType* const idx)
         {
             index.store(idx, std::memory_order::release);
         }
 
-        bool tryCommitDesc(DescType*& oldDesc, DescType* const newDesc)
+        bool casDesc(DescType*& oldDesc, DescType* const newDesc)
         {
             return registered.compare_exchange_strong(
                 oldDesc, newDesc, std::memory_order_acq_rel);
@@ -170,38 +170,45 @@ namespace eskada
             return registered.load(std::memory_order_acquire);
         }
 
-        void storeDesc(DescType* desc)
+        void storeDesc(DescType* const desc)
         {
             registered.store(desc, std::memory_order::release);
         }
     };
 
     template<class Task, size_t MAX_SIZE>
-    struct EventDeqBase :
-        public EventDeqRaw<Task, MAX_SIZE>
+    struct EventDeqBase
     {
-        using BaseType = EventDeqRaw<Task, MAX_SIZE>;
-        using IndexType = typename BaseType::IndexType;
-        using DescType = typename BaseType::DescType;
+        using RawType = EventDeqRaw<Task, MAX_SIZE>;
+        using IndexType = typename RawType::IndexType;
+        using DescType = typename RawType::DescType;
 
     private:
+        RawType* raw;
         std::pmr::memory_resource* res;
 
     public:
-        EventDeqBase() :
-            res(std::pmr::get_default_resource())
+        EventDeqBase(
+            RawType* base,
+            std::pmr::memory_resource* upstream =
+            std::pmr::get_default_resource()) :
+            raw(base),
+            res(upstream)
         {
+            if (base == nullptr)
+                throw std::invalid_argument{ "base is nullptr" };
+
             IndexType initIndex;
             IndexType* initIndexPtr = create(initIndex);
-            this->storeIndex(initIndexPtr);
+            raw->storeIndex(initIndexPtr);
         }
 
         ~EventDeqBase()
         {
-            IndexType* indexPtr = this->loadIndex();
+            IndexType* indexPtr = raw->loadIndex();
             destroy(indexPtr);
 
-            DescType* descPtr = this->loadDesc();
+            DescType* descPtr = raw->loadDesc();
             destroy(descPtr);
         }
 
@@ -210,23 +217,71 @@ namespace eskada
         EventDeqBase& operator= (const EventDeqBase&) = delete;
         EventDeqBase& operator= (EventDeqBase&&) = delete;
 
+        bool casTask(size_t idx, Task*& oldTask, Task* const newTask)
+        {
+            return raw->casTask(idx, oldTask, newTask);
+        }
+
+        Task* loadTask(size_t idx)
+        {
+            return raw->loadTask(idx);
+        }
+
+        void storeTask(size_t idx, Task* const task)
+        {
+            raw->storeTask(idx, task);
+        }
+
+        bool casIndex(IndexType*& oldIndex, IndexType* const newIndex)
+        {
+            return raw->casIndex(oldIndex, newIndex);
+        }
+
+        IndexType* loadIndex()
+        {
+            return raw->loadIndex();
+        }
+
+        void storeIndex(IndexType* const idx)
+        {
+            raw->storeIndex(idx);
+        }
+
+        bool casDesc(DescType*& oldDesc, DescType* const newDesc)
+        {
+            return raw->casDesc(oldDesc, newDesc);
+        }
+
+        DescType* loadDesc()
+        {
+            return raw->loadDesc();
+        }
+
+        void storeDesc(DescType* const desc)
+        {
+            raw->storeDesc(desc);
+        }
+
         template<class T>
+        [[nodiscard]]
         T* create(const T& origin)
         {
             if constexpr (!std::is_same_v<T, IndexType> &&
                 !std::is_same_v<T, DescType>)
                 return nullptr;
-
-            try
+            else
             {
-                T* idx = static_cast<T*>(res->allocate(sizeof(T), alignof(T)));
-                new(idx) T(origin);
+                try
+                {
+                    T* idx = static_cast<T*>(res->allocate(sizeof(T), alignof(T)));
+                    new(idx) T(origin);
 
-                return idx;
-            }
-            catch (...)
-            {
-                return nullptr;
+                    return idx;
+                }
+                catch (...)
+                {
+                    return nullptr;
+                }
             }
         }
 
@@ -236,32 +291,34 @@ namespace eskada
             if constexpr (!std::is_same_v<T, IndexType> &&
                 !std::is_same_v<T, DescType>)
                 return;
-
-            if (origin == nullptr)
-                return;
-
-            try
+            else
             {
+                if (origin == nullptr)
+                    return;
+
                 origin->~T();
                 res->deallocate(origin, sizeof(T), alignof(T));
-            }
-            catch (...)
-            {
+                origin = nullptr;
             }
         }
 
+        [[nodiscard]]
         bool tryCommitTask(DescType* const desc)
         {
             Task* oldTask = desc->oldTask;
             
-            return tryCommitTask(desc->targetIndex(), oldTask, desc->newTask);
+            if (raw->casTask(desc->targetIndex(), oldTask, desc->newTask))
+                return true;
+
+            return oldTask == desc->newTask;
         }
 
         void rollbackTask(DescType* const desc)
         {
-            this->storeTask(desc->targetIndex(), desc->oldTask);
+            raw->storeTask(desc->targetIndex(), desc->oldTask);
         }
 
+        [[nodiscard]]
         bool tryCommitIndex(DescType* const desc)
         {
             IndexType* oldIndex = loadIndex();
@@ -270,7 +327,7 @@ namespace eskada
                 return false;
 
             IndexType* newIndex = create(desc->newIndex);
-            if (tryCommitIndex(oldIndex, newIndex))
+            if (raw->casIndex(oldIndex, newIndex))
             {
                 destroy(oldIndex);
 
