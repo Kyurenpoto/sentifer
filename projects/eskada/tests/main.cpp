@@ -9,19 +9,19 @@ int main()
 
     using DeqType = EventDeqBase<int, 10>;
 
-    test("rollback") = [] {
+    test("rollbackTask") = [] {
         should("Success-Always") = [] {
             DeqType::RawType raw;
             DeqType deq(&raw);
             int task = 1;
-            int idx = 0;
+            size_t idx = 0;
             DeqType::DescType desc;
             desc.oldTask = nullptr;
             desc.newTask = &task;
 
-            deq.storeTask(idx, desc.newTask);
-            deq.rollbackTask(&desc);
-            int* result = deq.loadTask(idx);
+            raw.storeTask(idx, desc.newTask);
+            deq.rollbackTask(&desc, idx);
+            int* result = raw.loadTask(idx);
 
             expect(result == nullptr);
         };
@@ -31,29 +31,29 @@ int main()
         DeqType::RawType raw;
         DeqType deq(&raw);
         int task = 1;
-        int idx = 0;
+        size_t idx = 0;
         DeqType::DescType desc;
         desc.oldTask = nullptr;
         desc.newTask = &task;
 
         should("Success-CAS") = [&] {
-            deq.storeTask(idx, desc.oldTask);
-            bool result = deq.tryCommitTask(&desc);
+            raw.storeTask(idx, desc.oldTask);
+            bool result = deq.tryCommitTask(&desc, idx);
 
             expect(result == true);
 
-            int* target = deq.loadTask(idx);
+            int* target = raw.loadTask(idx);
 
             expect(target == desc.newTask);
         };
 
         should("Success-Already") = [&] {
-            deq.storeTask(idx, desc.newTask);
-            bool result = deq.tryCommitTask(&desc);
+            raw.storeTask(idx, desc.newTask);
+            bool result = deq.tryCommitTask(&desc, idx);
 
             expect(result == true);
 
-            int* target = deq.loadTask(idx);
+            int* target = raw.loadTask(idx);
 
             expect(target == desc.newTask);
         };
@@ -61,12 +61,12 @@ int main()
         should("Fail") = [&] {
             int tmp = 2;
 
-            deq.storeTask(idx, &tmp);
-            bool result = deq.tryCommitTask(&desc);
+            raw.storeTask(idx, &tmp);
+            bool result = deq.tryCommitTask(&desc, idx);
 
             expect(result == false);
 
-            int* target = deq.loadTask(idx);
+            int* target = raw.loadTask(idx);
 
             expect(target == &tmp);
         };
@@ -174,91 +174,6 @@ int main()
             deq.destroy(result);
 
             expect(result == nullptr);
-        };
-    };
-
-    test("tryCommitIndex") = [] {
-        should("Success-Already") = [] {
-            DeqType::RawType raw;
-            DeqType deq(&raw);
-            DeqType::DescType desc;
-            desc.oldIndex.front = 0;
-            desc.oldIndex.back = 2;
-            desc.newIndex.front = 0;
-            desc.newIndex.back = 1;
-
-            bool result = deq.tryCommitIndex(&desc);
-            expect(result == true);
-
-            DeqType::IndexType* target = deq.loadIndex();
-            expect(target != nullptr && *target == desc.newIndex);
-        };
-
-        should("Fail-Different") = [] {
-            DeqType::RawType raw;
-            DeqType deq(&raw);
-            DeqType::DescType desc;
-            desc.oldIndex.front = 0;
-            desc.oldIndex.back = 2;
-            desc.newIndex.front = 0;
-            desc.newIndex.back = 3;
-
-            bool result = deq.tryCommitIndex(&desc);
-            expect(result == false);
-
-            DeqType::IndexType* target = deq.loadIndex();
-            expect(target != nullptr && *target != desc.newIndex);
-        };
-
-        should("Success-CAS") = [] {
-            DeqType::RawType raw;
-            DeqType deq(&raw);
-            DeqType::DescType desc;
-            desc.oldIndex.front = 0;
-            desc.oldIndex.back = 1;
-            desc.newIndex.front = 0;
-            desc.newIndex.back = 2;
-
-            bool result = deq.tryCommitIndex(&desc);
-            expect(result == true);
-
-            DeqType::IndexType* target = deq.loadIndex();
-            expect(target != nullptr && *target == desc.newIndex);
-        };
-
-        should("Fail-CAS") = [] {
-            struct tmp :
-                DeqType
-            {
-                tmp(RawType* base) :
-                    DeqType(base)
-                {}
-
-                bool casIndex(IndexType*& oldIndex, IndexType* const newIndex)
-                    override
-                {
-                    IndexType currIndex = *DeqType::loadIndex();
-                    currIndex.front = 9;
-                    IndexType* updateIndex = create(currIndex);
-                    DeqType::storeIndex(updateIndex);
-
-                    return DeqType::casIndex(oldIndex, newIndex);
-                }
-            };
-
-            DeqType::RawType raw;
-            tmp deq(&raw);
-            DeqType::DescType desc;
-            desc.oldIndex.front = 0;
-            desc.oldIndex.back = 1;
-            desc.newIndex.front = 0;
-            desc.newIndex.back = 2;
-
-            bool result = deq.tryCommitIndex(&desc);
-            expect(result == false);
-
-            DeqType::IndexType* target = deq.loadIndex();
-            expect(target != nullptr && *target != desc.newIndex);
         };
     };
 
