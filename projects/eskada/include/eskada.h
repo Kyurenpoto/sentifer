@@ -168,12 +168,14 @@ namespace eskada
         RawType* raw;
 
     public:
-        EventDeqBase(RawType* base) :
-            raw(base)
+        EventDeqBase(RawType* raw_) :
+            raw(raw_)
         {
-            if (base == nullptr)
+            if (raw_ == nullptr)
                 throw std::invalid_argument{ "base is nullptr" };
         }
+
+        ~EventDeqBase() = default;
 
         EventDeqBase(const EventDeqBase&) = delete;
         EventDeqBase(EventDeqBase&&) = delete;
