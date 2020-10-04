@@ -47,17 +47,6 @@ int main()
             expect(target == desc.newTask);
         };
 
-        should("Success-Already") = [&] {
-            raw.storeTask(idx, desc.newTask);
-            bool result = deq.tryCommitTask(&desc, idx);
-
-            expect(result == true);
-
-            int* target = raw.loadTask(idx);
-
-            expect(target == desc.newTask);
-        };
-
         should("Fail") = [&] {
             int tmp = 2;
 

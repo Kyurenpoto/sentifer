@@ -183,12 +183,7 @@ namespace eskada
         [[nodiscard]]
         bool tryCommitTask(DescType* const desc, size_t idx)
         {
-            Task* oldTask = desc->oldTask;
-
-            if (raw->casTask(idx, oldTask, desc->newTask))
-                return true;
-
-            return oldTask == desc->newTask;
+            return raw->casTask(idx, desc->oldTask, desc->newTask);
         }
 
         void rollbackTask(DescType* const desc, size_t idx)
