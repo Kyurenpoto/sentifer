@@ -268,4 +268,82 @@ namespace eskada
             raw->storeTask(idx, desc->oldTask);
         }
     };
+
+    struct ThreadLocalStorage
+    {
+        inline thread_local static void* index = nullptr;
+    };
+
+    template<class Task, size_t MAX_SIZE>
+    struct EventDeqLF
+    {
+        using RawType = EventDeqRaw<Task, MAX_SIZE>;
+        using BaseType = EventDeqBase<Task, MAX_SIZE>;
+        using IndexType = typename RawType::IndexType;
+        using DescType = typename RawType::DescType;
+
+    private:
+        RawType* raw;
+        BaseType* base;
+
+    public:
+        void doLFOp(DescType& desc)
+        {
+            if (desc.state != EventDeqState::PENDING)
+                return;
+
+            IndexType* oldIndex = raw->loadIndex();
+            if (oldIndex == nullptr)
+            {
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            IndexType oldIndexVal = *oldIndex;
+            IndexType newIndexVal = oldIndexVal.move(desc.op);
+            if (!oldIndexVal.isValid() || !newIndexVal.isValid())
+            {
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            size_t idx = oldIndexVal.targetIndex();
+            desc.oldTask = raw->loadTask(idx);
+            if ((desc.oldTask == nullptr) == (desc.newTask == nullptr))
+            {
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            if (!raw->casTask(idx, desc.oldTask, desc.newTask))
+            {
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            IndexType* newIndex =
+                static_cast<IndexType*>(ThreadLocalStorage::index);
+            newIndex->IndexType();
+            newIndex->front = newIndexVal.front;
+            newIndex->back = newIndexVal.back;
+            if (!raw->casIndex(oldIndex, newIndex))
+            {
+                raw->storeTask(idx, desc.oldTask);
+                newIndex->~IndexType();
+
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            oldIndex->~Indextype();
+            ThreadLocalStorage::index = static_cast<void*>(oldIndex);
+
+            desc.state = EventDeqState::SUCCESS;
+        }
+    };
 }
