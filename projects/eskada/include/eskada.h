@@ -212,22 +212,28 @@ namespace eskada
         BaseType* base;
 
     public:
+        EventDeqLF(RawType* raw_) :
+            raw(raw_)
+        {
+            if (raw_ == nullptr)
+                throw std::invalid_argument{ "base is nullptr" };
+        }
+
+        ~EventDeqLF() = default;
+
+        EventDeqLF(const EventDeqLF&) = delete;
+        EventDeqLF(EventDeqLF&&) = delete;
+        EventDeqLF& operator= (const EventDeqLF&) = delete;
+        EventDeqLF& operator= (EventDeqLF&&) = delete;
+
         void doLFOp(DescType& desc)
         {
             if (desc.state != EventDeqState::PENDING)
                 return;
 
-            IndexType* oldIndex = raw->loadIndex();
-            if (oldIndex == nullptr)
-            {
-                desc.state = EventDeqState::FAILED;
-
-                return;
-            }
-
-            IndexType oldIndexVal = *oldIndex;
-            IndexType newIndexVal = oldIndexVal.move(desc.op);
-            if (!oldIndexVal.isValid() || !newIndexVal.isValid())
+            IndexType* oldIndex;
+            IndexType oldIndexVal, newIndexVal;
+            if (!isValidIndex(oldIndex, oldIndexVal, newIndexVal))
             {
                 desc.state = EventDeqState::FAILED;
 
@@ -235,40 +241,76 @@ namespace eskada
             }
 
             size_t idx = oldIndexVal.targetIndex();
+            if (!tryCommitTask(desc, idx))
+            {
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            if (!tryCommitIndex(oldIndex, newIndexVal))
+            {
+                rollbackCommits(desc, idx);
+
+                desc.state = EventDeqState::FAILED;
+
+                return;
+            }
+
+            updateTLS(oldIndex);
+
+            desc.state = EventDeqState::SUCCESS;
+        }
+
+        [[nodiscard]]
+        bool isValidIndex(
+            IndexType*& oldIndex,
+            IndexType& oldIndexVal,
+            IndexType& newIndexVal)
+        {
+            oldIndex = raw->loadIndex();
+            if (oldIndex == nullptr)
+                return false;
+
+            oldIndexVal = *oldIndex;
+            newIndexVal = oldIndexVal.move(desc.op);
+
+            return oldIndexVal.isValid() && newIndexVal.isValid();
+        }
+
+        [[nodiscard]]
+        bool tryCommitTask(DescType*& desc, size_t idx)
+        {
             desc.oldTask = raw->loadTask(idx);
             if ((desc.oldTask == nullptr) == (desc.newTask == nullptr))
-            {
-                desc.state = EventDeqState::FAILED;
+                return false;
 
-                return;
-            }
+            return raw->casTask(idx, desc.oldTask, desc.newTask);
+        }
 
-            if (!raw->casTask(idx, desc.oldTask, desc.newTask))
-            {
-                desc.state = EventDeqState::FAILED;
+        [[nodiscard]]
+        bool tryCommitIndex(IndexType*& oldIndex, const IndexType& newIndexVal)
+        {
+            IndexType* newIndex =
+                static_cast<IndexType*>(ThreadLocalStorage::index);
+            newIndex->IndexType(newIndexVal);
 
-                return;
-            }
+            return raw->casIndex(oldIndex, newIndex);
+        }
+
+        void rollbackCommits(const DescType* desc, size_t idx)
+        {
+            raw->storeTask(idx, desc.oldTask);
 
             IndexType* newIndex =
                 static_cast<IndexType*>(ThreadLocalStorage::index);
-            newIndex->IndexType();
-            newIndex->front = newIndexVal.front;
-            newIndex->back = newIndexVal.back;
-            if (!raw->casIndex(oldIndex, newIndex))
-            {
-                raw->storeTask(idx, desc.oldTask);
-                newIndex->~IndexType();
+            newIndex->~IndexType();
+        }
 
-                desc.state = EventDeqState::FAILED;
-
-                return;
-            }
-
+        void updateTLS(IndexType*& oldIndex)
+        {
             oldIndex->~Indextype();
             ThreadLocalStorage::index = static_cast<void*>(oldIndex);
-
-            desc.state = EventDeqState::SUCCESS;
         }
     };
 }
