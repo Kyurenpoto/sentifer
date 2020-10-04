@@ -21,32 +21,30 @@ namespace eskada
         size_t front = 0;
         size_t back = 1;
 
-        void move(const EventDeqOp op, EventDeqIndex& result)
+        EventDeqIndex move(const EventDeqOp op)
             const noexcept
         {
+            EventDeqIndex result = *this;
+
             switch (op)
             {
             case EventDeqOp::PUSH_FRONT:
-            {
-                result = *this;
                 result.front = (front - 1 + REAL_SIZE) % REAL_SIZE;
-            }
+                break;
             case EventDeqOp::PUSH_BACK:
-            {
-                result = *this;
                 result.back = (back + 1) % REAL_SIZE;
-            }
+                break;
             case EventDeqOp::POP_FRONT:
-            {
-                result = *this;
                 result.front = (front + 1) % REAL_SIZE;
-            }
+                break;
             case EventDeqOp::POP_BACK:
-            {
-                result = *this;
                 result.back = (back - 1 + REAL_SIZE) % REAL_SIZE;
+                break;
+            default:
+                break;
             }
-            }
+
+            return result;
         }
 
         [[nodiscard]]
@@ -172,7 +170,7 @@ namespace eskada
             raw(raw_)
         {
             if (raw_ == nullptr)
-                throw std::invalid_argument{ "base is nullptr" };
+                std::abort();
         }
 
         ~EventDeqBase() = default;
@@ -183,14 +181,64 @@ namespace eskada
         EventDeqBase& operator= (EventDeqBase&&) = delete;
 
         [[nodiscard]]
-        bool tryCommitTask(DescType* const desc, size_t idx)
+        bool isValidIndex(
+            const DescType& desc,
+            IndexType*& oldIndex,
+            IndexType& oldIndexVal,
+            IndexType& newIndexVal)
         {
-            return raw->casTask(idx, desc->oldTask, desc->newTask);
+            oldIndex = raw->loadIndex();
+            if (oldIndex == nullptr)
+                std::abort();
+
+            oldIndexVal = *oldIndex;
+            newIndexVal = oldIndexVal.move(desc.op);
+
+            return oldIndexVal.isValid() && newIndexVal.isValid();
         }
 
-        void rollbackTask(DescType* const desc, size_t idx)
+        [[nodiscard]]
+        bool tryCommitTask(DescType& desc, size_t idx)
         {
-            raw->storeTask(idx, desc->oldTask);
+            desc.oldTask = raw->loadTask(idx);
+            if ((desc.oldTask == nullptr) == (desc.newTask == nullptr))
+                return false;
+
+            return raw->casTask(idx, desc.oldTask, desc.newTask);
+        }
+
+        [[nodiscard]]
+        bool tryCommitIndex(IndexType*& oldIndex, const IndexType& newIndexVal)
+        {
+            IndexType* newIndex =
+                static_cast<IndexType*>(ThreadLocalStorage::index);
+            if (newIndex == nullptr)
+                std::abort();
+
+            new(newIndex) IndexType(newIndexVal);
+
+            return raw->casIndex(oldIndex, newIndex);
+        }
+
+        void rollbackCommits(const DescType& desc, size_t idx)
+        {
+            raw->storeTask(idx, desc.oldTask);
+
+            IndexType* newIndex =
+                static_cast<IndexType*>(ThreadLocalStorage::index);
+            if (newIndex == nullptr)
+                std::abort();
+
+            newIndex->~IndexType();
+        }
+
+        void updateTLS(IndexType*& oldIndex)
+        {
+            if (oldIndex == nullptr)
+                std::abort();
+
+            oldIndex->~IndexType();
+            ThreadLocalStorage::index = static_cast<void*>(oldIndex);
         }
     };
 
@@ -208,15 +256,14 @@ namespace eskada
         using DescType = typename RawType::DescType;
 
     private:
-        RawType* raw;
         BaseType* base;
 
     public:
-        EventDeqLF(RawType* raw_) :
-            raw(raw_)
+        EventDeqLF(BaseType* base_) :
+            base(base_)
         {
-            if (raw_ == nullptr)
-                throw std::invalid_argument{ "base is nullptr" };
+            if (base_ == nullptr)
+                std::abort();
         }
 
         ~EventDeqLF() = default;
@@ -233,7 +280,7 @@ namespace eskada
 
             IndexType* oldIndex;
             IndexType oldIndexVal, newIndexVal;
-            if (!isValidIndex(oldIndex, oldIndexVal, newIndexVal))
+            if (!base->isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
             {
                 desc.state = EventDeqState::FAILED;
 
@@ -241,76 +288,25 @@ namespace eskada
             }
 
             size_t idx = oldIndexVal.targetIndex();
-            if (!tryCommitTask(desc, idx))
+            if (!base->tryCommitTask(desc, idx))
             {
                 desc.state = EventDeqState::FAILED;
 
                 return;
             }
 
-            if (!tryCommitIndex(oldIndex, newIndexVal))
+            if (!base->tryCommitIndex(oldIndex, newIndexVal))
             {
-                rollbackCommits(desc, idx);
+                base->rollbackCommits(desc, idx);
 
                 desc.state = EventDeqState::FAILED;
 
                 return;
             }
 
-            updateTLS(oldIndex);
+            base->updateTLS(oldIndex);
 
             desc.state = EventDeqState::SUCCESS;
-        }
-
-        [[nodiscard]]
-        bool isValidIndex(
-            IndexType*& oldIndex,
-            IndexType& oldIndexVal,
-            IndexType& newIndexVal)
-        {
-            oldIndex = raw->loadIndex();
-            if (oldIndex == nullptr)
-                return false;
-
-            oldIndexVal = *oldIndex;
-            newIndexVal = oldIndexVal.move(desc.op);
-
-            return oldIndexVal.isValid() && newIndexVal.isValid();
-        }
-
-        [[nodiscard]]
-        bool tryCommitTask(DescType*& desc, size_t idx)
-        {
-            desc.oldTask = raw->loadTask(idx);
-            if ((desc.oldTask == nullptr) == (desc.newTask == nullptr))
-                return false;
-
-            return raw->casTask(idx, desc.oldTask, desc.newTask);
-        }
-
-        [[nodiscard]]
-        bool tryCommitIndex(IndexType*& oldIndex, const IndexType& newIndexVal)
-        {
-            IndexType* newIndex =
-                static_cast<IndexType*>(ThreadLocalStorage::index);
-            newIndex->IndexType(newIndexVal);
-
-            return raw->casIndex(oldIndex, newIndex);
-        }
-
-        void rollbackCommits(const DescType* desc, size_t idx)
-        {
-            raw->storeTask(idx, desc.oldTask);
-
-            IndexType* newIndex =
-                static_cast<IndexType*>(ThreadLocalStorage::index);
-            newIndex->~IndexType();
-        }
-
-        void updateTLS(IndexType*& oldIndex)
-        {
-            oldIndex->~Indextype();
-            ThreadLocalStorage::index = static_cast<void*>(oldIndex);
         }
     };
 }
