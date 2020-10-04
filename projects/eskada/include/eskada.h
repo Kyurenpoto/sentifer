@@ -21,13 +21,6 @@ namespace eskada
         size_t front = 0;
         size_t back = 1;
 
-        [[nodiscard]]
-        bool operator==(const EventDeqIndex& other)
-            const noexcept
-        {
-            return front == other.front && back == other.back;
-        }
-
         void move(const EventDeqOp op, EventDeqIndex& result)
             const noexcept
         {
@@ -97,13 +90,6 @@ namespace eskada
         Task* newTask = nullptr;
         EventDeqOp op = EventDeqOp::PUSH_FRONT;
         EventDeqState state = EventDeqState::PENDING;
-
-        void updatePhase(const EventDeqState newPhase, EventDeqDesc& result)
-            const noexcept
-        {
-            result = *this;
-            result.state = newPhase;
-        }
     };
 
     template<class Task, size_t MAX_SIZE>
@@ -180,77 +166,19 @@ namespace eskada
 
     private:
         RawType* raw;
-        std::pmr::memory_resource* res;
 
     public:
-        EventDeqBase(
-            RawType* base,
-            std::pmr::memory_resource* upstream =
-            std::pmr::get_default_resource()) :
-            raw(base),
-            res(upstream)
+        EventDeqBase(RawType* base) :
+            raw(base)
         {
             if (base == nullptr)
                 throw std::invalid_argument{ "base is nullptr" };
-
-            IndexType initIndex;
-            IndexType* initIndexPtr = create(initIndex);
-            raw->storeIndex(initIndexPtr);
-        }
-
-        ~EventDeqBase()
-        {
-            IndexType* indexPtr = raw->loadIndex();
-            destroy(indexPtr);
-
-            DescType* descPtr = raw->loadDesc();
-            destroy(descPtr);
         }
 
         EventDeqBase(const EventDeqBase&) = delete;
         EventDeqBase(EventDeqBase&&) = delete;
         EventDeqBase& operator= (const EventDeqBase&) = delete;
         EventDeqBase& operator= (EventDeqBase&&) = delete;
-
-        template<class T>
-        [[nodiscard]]
-        T* create(const T& origin)
-        {
-            if constexpr (!std::is_same_v<T, IndexType> &&
-                !std::is_same_v<T, DescType>)
-                return nullptr;
-            else
-            {
-                try
-                {
-                    T* idx = static_cast<T*>(res->allocate(sizeof(T), alignof(T)));
-                    new(idx) T(origin);
-
-                    return idx;
-                }
-                catch (...)
-                {
-                    return nullptr;
-                }
-            }
-        }
-
-        template<class T>
-        void destroy(T*& origin)
-        {
-            if constexpr (!std::is_same_v<T, IndexType> &&
-                !std::is_same_v<T, DescType>)
-                return;
-            else
-            {
-                if (origin == nullptr)
-                    return;
-
-                origin->~T();
-                res->deallocate(origin, sizeof(T), alignof(T));
-                origin = nullptr;
-            }
-        }
 
         [[nodiscard]]
         bool tryCommitTask(DescType* const desc, size_t idx)
