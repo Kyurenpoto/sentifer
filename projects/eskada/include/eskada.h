@@ -278,8 +278,9 @@ namespace eskada
             if (desc.state != EventDeqState::PENDING)
                 return;
 
-            IndexType* oldIndex;
-            IndexType oldIndexVal, newIndexVal;
+            IndexType* oldIndex = nullptr;
+            IndexType oldIndexVal;
+            IndexType newIndexVal;
             if (!base->isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
             {
                 desc.state = EventDeqState::FAILED;
@@ -287,7 +288,7 @@ namespace eskada
                 return;
             }
 
-            size_t idx = oldIndexVal.targetIndex();
+            size_t idx = oldIndexVal.targetIndex(desc.op);
             if (!base->tryCommitTask(desc, idx))
             {
                 desc.state = EventDeqState::FAILED;

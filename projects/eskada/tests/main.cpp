@@ -1,5 +1,6 @@
 #include <string>
 #include <tuple>
+#include <functional>
 
 #include "eskada.h"
 
@@ -29,7 +30,7 @@ void testEventDeqBase()
             auto& [name, op, prev, next] = args;
 
             should(std::string("Success-") + name) =
-                [&, op=op, prev=prev, next=next] {
+                [&, op = op, prev = prev, next = next] {
                 DeqType::DescType desc;
                 desc.op = op;
 
@@ -63,7 +64,7 @@ void testEventDeqBase()
                 DeqType::DescType desc;
                 desc.op = op;
 
-                DeqType::IndexType index{.front = 0, .back = 0};
+                DeqType::IndexType index{ .front = 0, .back = 0 };
                 raw.storeIndex(&index);
 
                 DeqType::IndexType* oldIndex = nullptr;
@@ -171,7 +172,7 @@ void testEventDeqBase()
             ThreadLocalStorage::index = nullptr;
 
             expect(result);
-            
+
             DeqType::IndexType* newIndex = raw.loadIndex();
             expect(newIndex->front == newIndexVal.front &&
                 newIndex->back == newIndexVal.back);
@@ -237,12 +238,207 @@ void testEventDeqBase()
 
 void testEventDeqLF()
 {
+    using namespace boost::ut;
+    using namespace eskada;
 
+    using DeqType = EventDeqLF<int, 10>;
+
+    test("doLFOp") = [] {
+        DeqType::RawType raw;
+        DeqType::BaseType base(&raw);
+        DeqType deq(&base);
+        int x = 2;
+
+        for (auto& args : std::vector{
+            std::make_tuple(
+                "",
+                std::function{[&](DeqType::DescType& desc)
+                {
+                    deq.doLFOp(desc);
+                }
+                }),
+            std::make_tuple(
+                "-Simulated",
+                std::function{[&](DeqType::DescType& desc)
+                {
+                    if (desc.state != EventDeqState::PENDING)
+                        return;
+
+                    DeqType::IndexType* oldIndex = nullptr;
+                    DeqType::IndexType oldIndexVal;
+                    DeqType::IndexType newIndexVal;
+                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    size_t idx = oldIndexVal.targetIndex(desc.op);
+                    if (!base.tryCommitTask(desc, idx))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    if (!base.tryCommitIndex(oldIndex, newIndexVal))
+                    {
+                        base.rollbackCommits(desc, idx);
+
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    base.updateTLS(oldIndex);
+
+                    desc.state = EventDeqState::SUCCESS;
+                }
+                }) })
+        {
+            auto& [name, f] = args;
+
+            should(std::string{ "Success" } + name) = [&, f = f] {
+                DeqType::IndexType indexInit;
+                raw.storeIndex(&indexInit);
+
+                DeqType::IndexType indexTmp;
+                ThreadLocalStorage::index = &indexTmp;
+
+                DeqType::DescType desc;
+                desc.op = EventDeqOp::PUSH_BACK;
+                desc.newTask = &x;
+                f(desc);
+
+                ThreadLocalStorage::index = nullptr;
+
+                expect(desc.state == EventDeqState::SUCCESS);
+
+                DeqType::IndexType* index = raw.loadIndex();
+                raw.storeIndex(nullptr);
+
+                expect(index->front == 0 && index->back == 2);
+
+                size_t idx = indexInit.targetIndex(desc.op);
+                int* task = raw.loadTask(idx);
+                raw.storeTask(idx, nullptr);
+
+                expect(task == &x);
+            };
+        }
+
+        int y = 2;
+        DeqType::IndexType idxOther;
+
+        for (auto& args : std::vector{
+            std::make_tuple(
+                "CAS-Task",
+                std::function{[&](DeqType::DescType& desc)
+                {
+                    if (desc.state != EventDeqState::PENDING)
+                        return;
+
+                    DeqType::IndexType* oldIndex = nullptr;
+                    DeqType::IndexType oldIndexVal;
+                    DeqType::IndexType newIndexVal;
+                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    size_t idx = oldIndexVal.targetIndex(desc.op);
+                    raw.storeTask(idx, &y);
+                    if (!base.tryCommitTask(desc, idx))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    desc.state = EventDeqState::SUCCESS;
+                }
+                }),
+            std::make_tuple(
+                "CAS-Index",
+                std::function{[&](DeqType::DescType& desc)
+                {
+                    if (desc.state != EventDeqState::PENDING)
+                        return;
+
+                    DeqType::IndexType* oldIndex = nullptr;
+                    DeqType::IndexType oldIndexVal;
+                    DeqType::IndexType newIndexVal;
+                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    size_t idx = oldIndexVal.targetIndex(desc.op);
+                    if (!base.tryCommitTask(desc, idx))
+                    {
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    raw.storeIndex(&idxOther);
+                    if (!base.tryCommitIndex(oldIndex, newIndexVal))
+                    {
+                        base.rollbackCommits(desc, idx);
+
+                        desc.state = EventDeqState::FAILED;
+
+                        return;
+                    }
+
+                    base.updateTLS(oldIndex);
+
+                    desc.state = EventDeqState::SUCCESS;
+                }
+                }) })
+        {
+            auto& [name, f] = args;
+
+            should(std::string{ "Fail-" } + name) = [&, f = f] {
+                DeqType::IndexType indexInit;
+                raw.storeIndex(&indexInit);
+
+                DeqType::IndexType indexTmp;
+                ThreadLocalStorage::index = &indexTmp;
+
+                DeqType::DescType desc;
+                desc.op = EventDeqOp::PUSH_BACK;
+                desc.newTask = &x;
+                f(desc);
+
+                ThreadLocalStorage::index = nullptr;
+
+                expect(desc.state == EventDeqState::FAILED);
+
+                DeqType::IndexType* index = raw.loadIndex();
+                raw.storeIndex(nullptr);
+
+                expect(index->front == 0 && index->back == 1);
+
+                size_t idx = indexInit.targetIndex(desc.op);
+                int* task = raw.loadTask(idx);
+                raw.storeTask(idx, nullptr);
+
+                expect(task != &x);
+            };
+        }
+    };
 }
 
 int main()
 {
     testEventDeqBase();
+    testEventDeqLF();
 
     return 0;
 }
