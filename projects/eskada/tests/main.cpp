@@ -31,8 +31,8 @@ void testEventDeqBase()
 
             should(std::string("Success-") + name) =
                 [&, op = op, prev = prev, next = next] {
-                DeqType::DescType desc;
-                desc.op = op;
+                DeqType::RecordType record;
+                record.op = op;
 
                 DeqType::IndexType index = prev;
                 raw.storeIndex(&index);
@@ -41,7 +41,7 @@ void testEventDeqBase()
                 DeqType::IndexType oldIndexVal;
                 DeqType::IndexType newIndexVal;
                 bool result =
-                    deq.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal);
+                    deq.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal);
 
                 expect(result);
                 expect(oldIndex == &index);
@@ -61,8 +61,8 @@ void testEventDeqBase()
             auto& [name, op] = args;
 
             should(std::string("Fail-Old-") + name) = [&, op = op] {
-                DeqType::DescType desc;
-                desc.op = op;
+                DeqType::RecordType record;
+                record.op = op;
 
                 DeqType::IndexType index{ .front = 0, .back = 0 };
                 raw.storeIndex(&index);
@@ -71,7 +71,7 @@ void testEventDeqBase()
                 DeqType::IndexType oldIndexVal;
                 DeqType::IndexType newIndexVal;
                 bool result =
-                    deq.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal);
+                    deq.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal);
 
                 expect(!result);
             };
@@ -91,8 +91,8 @@ void testEventDeqBase()
 
             should(std::string("Fail-New-") + name) =
                 [&, op = op, prev = prev] {
-                DeqType::DescType desc;
-                desc.op = op;
+                DeqType::RecordType record;
+                record.op = op;
 
                 DeqType::IndexType index = prev;
                 raw.storeIndex(&index);
@@ -101,7 +101,7 @@ void testEventDeqBase()
                 DeqType::IndexType oldIndexVal;
                 DeqType::IndexType newIndexVal;
                 bool result =
-                    deq.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal);
+                    deq.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal);
 
                 expect(!result);
             };
@@ -113,28 +113,28 @@ void testEventDeqBase()
         DeqType deq(&raw);
         int task = 1;
         size_t idx = 0;
-        DeqType::DescType desc;
+        DeqType::RecordType record;
 
         should("Success-CAS") = [&] {
-            desc.newTask = &task;
+            record.input = &task;
 
-            raw.storeTask(idx, desc.oldTask);
-            bool result = deq.tryCommitTask(desc, idx);
+            raw.storeTask(idx, record.output);
+            bool result = deq.tryCommitTask(record, idx);
 
             expect(result);
 
             int* target = raw.loadTask(idx);
 
-            expect(target == desc.newTask);
+            expect(target == record.input);
         };
 
         should("Fail-CAS") = [&] {
-            desc.newTask = &task;
+            record.input = &task;
 
             int tmp = 2;
 
             raw.storeTask(idx, &tmp);
-            bool result = deq.tryCommitTask(desc, idx);
+            bool result = deq.tryCommitTask(record, idx);
 
             expect(!result);
 
@@ -144,10 +144,10 @@ void testEventDeqBase()
         };
 
         should("Fail-Desc") = [&] {
-            desc.newTask = nullptr;
+            record.input = nullptr;
 
             raw.storeTask(idx, nullptr);
-            bool result = deq.tryCommitTask(desc, idx);
+            bool result = deq.tryCommitTask(record, idx);
 
             expect(!result);
         };
@@ -201,14 +201,14 @@ void testEventDeqBase()
         DeqType::RawType raw;
         DeqType deq(&raw);
         size_t idx = 0;
-        DeqType::DescType desc;
-        desc.oldTask = nullptr;
+        DeqType::RecordType record;
+        record.output = nullptr;
 
         should("Success") = [&] {
             DeqType::IndexType index;
             ThreadLocalStorage::index = &index;
 
-            deq.rollbackCommits(desc, idx);
+            deq.rollbackCommits(record, idx);
 
             void* addr = ThreadLocalStorage::index;
             ThreadLocalStorage::index = nullptr;
@@ -252,48 +252,48 @@ void testEventDeqLF()
         for (auto& args : std::vector{
             std::make_tuple(
                 "",
-                std::function{[&](DeqType::DescType& desc)
+                std::function{[&](DeqType::RecordType& record)
                 {
-                    deq.doLFOp(desc);
+                    deq.doLFOp(record);
                 }
                 }),
             std::make_tuple(
                 "-Simulated",
-                std::function{[&](DeqType::DescType& desc)
+                std::function{[&](DeqType::RecordType& record)
                 {
-                    if (desc.state != EventDeqState::PENDING)
+                    if (record.state != EventDeqRecordState::PENDING)
                         return;
 
                     DeqType::IndexType* oldIndex = nullptr;
                     DeqType::IndexType oldIndexVal;
                     DeqType::IndexType newIndexVal;
-                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    if (!base.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
-                    size_t idx = oldIndexVal.targetIndex(desc.op);
-                    if (!base.tryCommitTask(desc, idx))
+                    size_t idx = oldIndexVal.targetIndex(record.op);
+                    if (!base.tryCommitTask(record, idx))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
                     if (!base.tryCommitIndex(oldIndex, newIndexVal))
                     {
-                        base.rollbackCommits(desc, idx);
+                        base.rollbackCommits(record, idx);
 
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
                     base.updateTLS(oldIndex);
 
-                    desc.state = EventDeqState::SUCCESS;
+                    record.state = EventDeqRecordState::COMPLETED;
                 }
                 }) })
         {
@@ -306,21 +306,21 @@ void testEventDeqLF()
                 DeqType::IndexType indexTmp;
                 ThreadLocalStorage::index = &indexTmp;
 
-                DeqType::DescType desc;
-                desc.op = EventDeqOp::PUSH_BACK;
-                desc.newTask = &x;
-                f(desc);
+                DeqType::RecordType record;
+                record.op = EventDeqOp::PUSH_BACK;
+                record.input = &x;
+                f(record);
 
                 ThreadLocalStorage::index = nullptr;
 
-                expect(desc.state == EventDeqState::SUCCESS);
+                expect(record.state == EventDeqRecordState::COMPLETED);
 
                 DeqType::IndexType* index = raw.loadIndex();
                 raw.storeIndex(nullptr);
 
                 expect(index->front == 0 && index->back == 2);
 
-                size_t idx = indexInit.targetIndex(desc.op);
+                size_t idx = indexInit.targetIndex(record.op);
                 int* task = raw.loadTask(idx);
                 raw.storeTask(idx, nullptr);
 
@@ -334,54 +334,54 @@ void testEventDeqLF()
         for (auto& args : std::vector{
             std::make_tuple(
                 "CAS-Task",
-                std::function{[&](DeqType::DescType& desc)
+                std::function{[&](DeqType::RecordType& record)
                 {
-                    if (desc.state != EventDeqState::PENDING)
+                    if (record.state != EventDeqRecordState::PENDING)
                         return;
 
                     DeqType::IndexType* oldIndex = nullptr;
                     DeqType::IndexType oldIndexVal;
                     DeqType::IndexType newIndexVal;
-                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    if (!base.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
-                    size_t idx = oldIndexVal.targetIndex(desc.op);
+                    size_t idx = oldIndexVal.targetIndex(record.op);
                     raw.storeTask(idx, &y);
-                    if (!base.tryCommitTask(desc, idx))
+                    if (!base.tryCommitTask(record, idx))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
-                    desc.state = EventDeqState::SUCCESS;
+                    record.state = EventDeqRecordState::COMPLETED;
                 }
                 }),
             std::make_tuple(
                 "CAS-Index",
-                std::function{[&](DeqType::DescType& desc)
+                std::function{[&](DeqType::RecordType& record)
                 {
-                    if (desc.state != EventDeqState::PENDING)
+                    if (record.state != EventDeqRecordState::PENDING)
                         return;
 
                     DeqType::IndexType* oldIndex = nullptr;
                     DeqType::IndexType oldIndexVal;
                     DeqType::IndexType newIndexVal;
-                    if (!base.isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+                    if (!base.isValidIndex(record, oldIndex, oldIndexVal, newIndexVal))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
-                    size_t idx = oldIndexVal.targetIndex(desc.op);
-                    if (!base.tryCommitTask(desc, idx))
+                    size_t idx = oldIndexVal.targetIndex(record.op);
+                    if (!base.tryCommitTask(record, idx))
                     {
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
@@ -389,16 +389,16 @@ void testEventDeqLF()
                     raw.storeIndex(&idxOther);
                     if (!base.tryCommitIndex(oldIndex, newIndexVal))
                     {
-                        base.rollbackCommits(desc, idx);
+                        base.rollbackCommits(record, idx);
 
-                        desc.state = EventDeqState::FAILED;
+                        record.state = EventDeqRecordState::RESTART;
 
                         return;
                     }
 
                     base.updateTLS(oldIndex);
 
-                    desc.state = EventDeqState::SUCCESS;
+                    record.state = EventDeqRecordState::COMPLETED;
                 }
                 }) })
         {
@@ -411,21 +411,21 @@ void testEventDeqLF()
                 DeqType::IndexType indexTmp;
                 ThreadLocalStorage::index = &indexTmp;
 
-                DeqType::DescType desc;
-                desc.op = EventDeqOp::PUSH_BACK;
-                desc.newTask = &x;
-                f(desc);
+                DeqType::RecordType record;
+                record.op = EventDeqOp::PUSH_BACK;
+                record.input = &x;
+                f(record);
 
                 ThreadLocalStorage::index = nullptr;
 
-                expect(desc.state == EventDeqState::FAILED);
+                expect(record.state == EventDeqRecordState::RESTART);
 
                 DeqType::IndexType* index = raw.loadIndex();
                 raw.storeIndex(nullptr);
 
                 expect(index->front == 0 && index->back == 1);
 
-                size_t idx = indexInit.targetIndex(desc.op);
+                size_t idx = indexInit.targetIndex(record.op);
                 int* task = raw.loadTask(idx);
                 raw.storeTask(idx, nullptr);
 
@@ -435,10 +435,19 @@ void testEventDeqLF()
     };
 }
 
+void testEventDeqWF()
+{
+    using namespace boost::ut;
+    using namespace eskada;
+
+    using DeqType = EventDeqWF<int, 10>;
+}
+
 int main()
 {
     testEventDeqBase();
     testEventDeqLF();
+    testEventDeqWF();
 
     return 0;
 }

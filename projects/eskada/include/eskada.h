@@ -73,21 +73,60 @@ namespace eskada
         }
     };
 
-    enum class EventDeqState :
+    enum class EventDeqCASState :
         uint8_t
     {
         PENDING,
         SUCCESS,
-        FAILED
+        FAILURE
+    };
+
+    enum class EventDeqRecordState :
+        uint8_t
+    {
+        RESTART,
+        PENDING,
+        COMPLETED
     };
 
     template<class Task>
-    struct EventDeqDesc
+    struct EventDeqTaskDesc
     {
+        std::atomic<Task*>* target;
         Task* oldTask = nullptr;
         Task* newTask = nullptr;
-        EventDeqOp op = EventDeqOp::PUSH_FRONT;
-        EventDeqState state = EventDeqState::PENDING;
+        EventDeqCASState state = EventDeqCASState::PENDING;
+    };
+
+    template<size_t REAL_SIZE>
+    struct EventDeqIndexDesc
+    {
+        using IndexType = EventDeqIndex<REAL_SIZE>;
+
+        std::atomic<IndexType*>* target;
+        IndexType* oldIndex = nullptr;
+        IndexType* newIndex = nullptr;
+        EventDeqCASState state = EventDeqCASState::PENDING;
+    };
+
+    template<class Task, size_t REAL_SIZE>
+    struct EventDeqRecord
+    {
+        Task* input = nullptr;
+        Task* output = nullptr;
+        size_t ownerTid = 0;
+        EventDeqTaskDesc<Task>* taskDesc = nullptr;
+        EventDeqIndexDesc<REAL_SIZE>* indexDesc = nullptr;
+        EventDeqOp op = EventDeqOp::PUSH_BACK;
+        std::atomic<EventDeqRecordState> state = EventDeqRecordState::PENDING;
+    };
+
+    template<class Task, size_t REAL_SIZE>
+    struct EventDeqRecordBox
+    {
+        using RecordType = EventDeqRecord<Task, REAL_SIZE>;
+
+        RecordType* record = nullptr;
     };
 
     template<class Task, size_t MAX_SIZE>
@@ -98,11 +137,12 @@ namespace eskada
 
     public:
         using IndexType = EventDeqIndex<REAL_SIZE>;
-        using DescType = EventDeqDesc<Task>;
+        using RecordType = EventDeqRecord<Task, REAL_SIZE>;
+        using RecordBoxType = EventDeqRecordBox<Task, REAL_SIZE>;
 
     private:
         std::atomic<IndexType*> index = nullptr;
-        std::atomic<DescType*> registered = nullptr;
+        std::atomic<RecordType*> registered = nullptr;
         std::array<std::atomic<Task*>, REAL_SIZE> tasks{ nullptr };
 
     public:
@@ -138,20 +178,20 @@ namespace eskada
             index.store(idx, std::memory_order::release);
         }
 
-        bool casDesc(DescType*& oldDesc, DescType* const newDesc)
+        bool casDesc(RecordType*& oldDesc, RecordType* const newDesc)
         {
             return registered.compare_exchange_strong(
                 oldDesc, newDesc, std::memory_order_acq_rel);
         }
 
-        DescType* loadDesc()
+        RecordType* loadDesc()
         {
             return registered.load(std::memory_order_acquire);
         }
 
-        void storeDesc(DescType* const desc)
+        void storeDesc(RecordType* const record)
         {
-            registered.store(desc, std::memory_order::release);
+            registered.store(record, std::memory_order::release);
         }
     };
 
@@ -160,7 +200,8 @@ namespace eskada
     {
         using RawType = EventDeqRaw<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
-        using DescType = typename RawType::DescType;
+        using RecordType = typename RawType::RecordType;
+        using RecordBoxType = typename RawType::RecordBoxType;
 
     private:
         RawType* raw;
@@ -182,7 +223,7 @@ namespace eskada
 
         [[nodiscard]]
         bool isValidIndex(
-            const DescType& desc,
+            const RecordType& record,
             IndexType*& oldIndex,
             IndexType& oldIndexVal,
             IndexType& newIndexVal)
@@ -192,19 +233,19 @@ namespace eskada
                 std::abort();
 
             oldIndexVal = *oldIndex;
-            newIndexVal = oldIndexVal.move(desc.op);
+            newIndexVal = oldIndexVal.move(record.op);
 
             return oldIndexVal.isValid() && newIndexVal.isValid();
         }
 
         [[nodiscard]]
-        bool tryCommitTask(DescType& desc, size_t idx)
+        bool tryCommitTask(RecordType& record, size_t idx)
         {
-            desc.oldTask = raw->loadTask(idx);
-            if ((desc.oldTask == nullptr) == (desc.newTask == nullptr))
+            record.output = raw->loadTask(idx);
+            if ((record.output == nullptr) == (record.input == nullptr))
                 return false;
 
-            return raw->casTask(idx, desc.oldTask, desc.newTask);
+            return raw->casTask(idx, record.output, record.input);
         }
 
         [[nodiscard]]
@@ -220,9 +261,9 @@ namespace eskada
             return raw->casIndex(oldIndex, newIndex);
         }
 
-        void rollbackCommits(const DescType& desc, size_t idx)
+        void rollbackCommits(const RecordType& record, size_t idx)
         {
-            raw->storeTask(idx, desc.oldTask);
+            raw->storeTask(idx, record.output);
 
             IndexType* newIndex =
                 static_cast<IndexType*>(ThreadLocalStorage::index);
@@ -253,7 +294,7 @@ namespace eskada
         using RawType = EventDeqRaw<Task, MAX_SIZE>;
         using BaseType = EventDeqBase<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
-        using DescType = typename RawType::DescType;
+        using RecordType = typename RawType::RecordType;
 
     private:
         BaseType* base;
@@ -273,41 +314,122 @@ namespace eskada
         EventDeqLF& operator= (const EventDeqLF&) = delete;
         EventDeqLF& operator= (EventDeqLF&&) = delete;
 
-        void doLFOp(DescType& desc)
+        void doLFOp(RecordType& record)
         {
-            if (desc.state != EventDeqState::PENDING)
+            if (record.state != EventDeqRecordState::PENDING)
                 return;
 
             IndexType* oldIndex = nullptr;
             IndexType oldIndexVal;
             IndexType newIndexVal;
-            if (!base->isValidIndex(desc, oldIndex, oldIndexVal, newIndexVal))
+            if (!base->isValidIndex(record, oldIndex, oldIndexVal, newIndexVal))
             {
-                desc.state = EventDeqState::FAILED;
+                record.state = EventDeqRecordState::RESTART;
 
                 return;
             }
 
-            size_t idx = oldIndexVal.targetIndex(desc.op);
-            if (!base->tryCommitTask(desc, idx))
+            size_t idx = oldIndexVal.targetIndex(record.op);
+            if (!base->tryCommitTask(record, idx))
             {
-                desc.state = EventDeqState::FAILED;
+                record.state = EventDeqRecordState::RESTART;
 
                 return;
             }
 
             if (!base->tryCommitIndex(oldIndex, newIndexVal))
             {
-                base->rollbackCommits(desc, idx);
+                base->rollbackCommits(record, idx);
 
-                desc.state = EventDeqState::FAILED;
+                record.state = EventDeqRecordState::RESTART;
 
                 return;
             }
 
             base->updateTLS(oldIndex);
 
-            desc.state = EventDeqState::SUCCESS;
+            record.state = EventDeqRecordState::COMPLETED;
+        }
+    };
+
+    template<class RecordBoxType, size_t MAX_SIZE>
+    struct HelpQueue
+    {
+        using RecordType = typename RecordBoxType::RecordType;
+
+        [[nodiscard]]
+        bool enqueue(RecordType* const record)
+        {
+
+        }
+
+        [[nodiscard]]
+        RecordBoxType* peek()
+        {
+
+        }
+
+        void dequeue(RecordBoxType* const obx)
+        {
+
+        }
+    };
+
+    template<class Task, size_t MAX_SIZE>
+    struct EventDeqWF
+    {
+        using RawType = EventDeqRaw<Task, MAX_SIZE>;
+        using BaseType = EventDeqBase<Task, MAX_SIZE>;
+        using IndexType = typename RawType::IndexType;
+        using RecordType = typename RawType::RecordType;
+        using RecordBoxType = typename RawType::RecordBoxType;
+
+    private:
+        BaseType* base;
+
+    public:
+        EventDeqWF(BaseType* base_) :
+            base(base_)
+        {
+            if (base_ == nullptr)
+                std::abort();
+        }
+
+        ~EventDeqWF() = default;
+
+        EventDeqWF(const EventDeqWF&) = delete;
+        EventDeqWF(EventDeqWF&&) = delete;
+        EventDeqWF& operator= (const EventDeqWF&) = delete;
+        EventDeqWF& operator= (EventDeqWF&&) = delete;
+
+        void doWFOp(RecordType& record)
+        {
+
+        }
+
+        void help(bool beingHelped, RecordBoxType* box)
+        {
+
+        }
+
+        void doHelpOp(RecordBoxType* box)
+        {
+
+        }
+
+        void preCASes(RecordBoxType* box, RecordType* record)
+        {
+
+        }
+
+        void executeCASes(RecordType* record)
+        {
+
+        }
+
+        void postCASes(RecordBoxType* box, RecordType* record)
+        {
+
         }
     };
 }
