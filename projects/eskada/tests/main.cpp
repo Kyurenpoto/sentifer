@@ -108,6 +108,144 @@ void testEventDeqBase()
         }
     };
 
+    test("isNotProgressed") = [] {
+        DeqType::RawType raw;
+        DeqType deq(&raw);
+
+        for (auto& args : std::vector{
+            std::make_tuple("PushBack", EventDeqOp::PUSH_BACK),
+            std::make_tuple("PushFront", EventDeqOp::PUSH_FRONT),
+            std::make_tuple("PopBack", EventDeqOp::POP_BACK),
+            std::make_tuple("PopFront", EventDeqOp::POP_FRONT) })
+        {
+            auto& [name, op] = args;
+
+            should(std::string("Success-Empty-") + name) =
+                [&, op = op] {
+                DeqType::IndexType oldIndexVal;
+                DeqType::RecordType record;
+                record.op = op;
+
+                bool result = deq.isNotProgressed(record, oldIndexVal);
+
+                expect(result);
+            };
+        }
+
+        for (auto& args : std::vector{
+            std::make_tuple("PushBack", EventDeqOp::PUSH_BACK),
+            std::make_tuple("PushFront", EventDeqOp::PUSH_FRONT),
+            std::make_tuple("PopBack", EventDeqOp::POP_BACK),
+            std::make_tuple("PopFront", EventDeqOp::POP_FRONT) })
+        {
+            auto& [name, op] = args;
+
+            should(std::string("Success-Full-") + name) =
+                [&, op = op] {
+                DeqType::IndexType oldIndexVal{ .front = 0, .back = 11 };
+                DeqType::RecordType record;
+                record.op = op;
+
+                int x[10];
+                for (size_t i = 0; i < 10; ++i)
+                    raw.storeTask(i + 1, &x[i]);
+
+                bool result = deq.isNotProgressed(record, oldIndexVal);
+
+                for (size_t i = 1; i <= 10; ++i)
+                    raw.storeTask(i, nullptr);
+
+                expect(result);
+            };
+        }
+
+        for (auto& args : std::vector{
+            std::make_tuple("PushBack", EventDeqOp::PUSH_BACK),
+            std::make_tuple("PushFront", EventDeqOp::PUSH_FRONT),
+            std::make_tuple("PopBack", EventDeqOp::POP_BACK),
+            std::make_tuple("PopFront", EventDeqOp::POP_FRONT) })
+        {
+            auto& [name, op] = args;
+
+            should(std::string("Success-Non-Special-") + name) =
+                [&, op = op] {
+                DeqType::IndexType oldIndexVal{ .front = 0, .back = 5 };
+                DeqType::RecordType record;
+                record.op = op;
+
+                int x[4];
+                for (size_t i = 0; i < 4; ++i)
+                    raw.storeTask(i + 1, &x[i]);
+
+                bool result = deq.isNotProgressed(record, oldIndexVal);
+
+                for (size_t i = 1; i <= 4; ++i)
+                    raw.storeTask(i, nullptr);
+
+                expect(result);
+            };
+        }
+
+        for (auto& args : std::vector{
+            std::make_tuple("PushBack", EventDeqOp::PUSH_BACK,
+            DeqType::IndexType{.front = 0, .back = 4}),
+            std::make_tuple("PushFront", EventDeqOp::PUSH_FRONT,
+            DeqType::IndexType{.front = 1, .back = 5}),
+            std::make_tuple("PopBack", EventDeqOp::POP_BACK,
+            DeqType::IndexType{.front = 0, .back = 4}),
+            std::make_tuple("PopFront", EventDeqOp::POP_FRONT,
+            DeqType::IndexType{.front = 1, .back = 5}) })
+        {
+            auto& [name, op, oldIndexVal] = args;
+
+            should(std::string("Fail-Curr-") + name) =
+                [&, op = op, oldIndexVal = oldIndexVal] {
+                DeqType::RecordType record;
+                record.op = op;
+
+                int x[4];
+                for (size_t i = 0; i < 4; ++i)
+                    raw.storeTask(i + 1, &x[i]);
+
+                bool result = deq.isNotProgressed(record, oldIndexVal);
+
+                for (size_t i = 1; i <= 4; ++i)
+                    raw.storeTask(i, nullptr);
+
+                expect(!result);
+            };
+        }
+
+        for (auto& args : std::vector{
+            std::make_tuple("PushBack", EventDeqOp::PUSH_BACK, 4),
+            std::make_tuple("PushFront", EventDeqOp::PUSH_FRONT, 1),
+            std::make_tuple("PopBack", EventDeqOp::POP_BACK, 4),
+            std::make_tuple("PopFront", EventDeqOp::POP_FRONT, 1) })
+        {
+            auto& [name, op, popIdx] = args;
+
+            should(std::string("Fail-Prev-") + name) =
+                [&, op = op, popIdx = popIdx] {
+                DeqType::IndexType oldIndexVal{ .front = 0, .back = 5 };
+                DeqType::RecordType record;
+                record.op = op;
+
+                int x[4];
+                for (size_t i = 0; i < 4; ++i)
+                    raw.storeTask(i + 1, &x[i]);
+
+                raw.storeTask(popIdx, nullptr);
+
+                bool result = deq.isNotProgressed(record, oldIndexVal);
+
+                for (size_t i = 1; i <= 4; ++i)
+                    raw.storeTask(i, nullptr);
+
+                expect(!result);
+            };
+        }
+    };
+
     test("tryCommitTask") = [] {
         DeqType::RawType raw;
         DeqType deq(&raw);

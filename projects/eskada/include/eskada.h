@@ -21,6 +21,7 @@ namespace eskada
         size_t front = 0;
         size_t back = 1;
 
+        [[nodiscard]]
         EventDeqIndex move(const EventDeqOp op)
             const noexcept
         {
@@ -48,6 +49,29 @@ namespace eskada
         }
 
         [[nodiscard]]
+        EventDeqIndex prev(const EventDeqOp op)
+            const noexcept
+        {
+            EventDeqIndex result = *this;
+
+            switch (op)
+            {
+            case EventDeqOp::PUSH_FRONT:
+            case EventDeqOp::POP_FRONT:
+                result.front = (front + 1) % REAL_SIZE;
+                break;
+            case EventDeqOp::PUSH_BACK:
+            case EventDeqOp::POP_BACK:
+                result.back = (back - 1 + REAL_SIZE) % REAL_SIZE;
+                break;
+            default:
+                break;
+            }
+
+            return result;
+        }
+
+        [[nodiscard]]
         bool isValid()
             const noexcept
         {
@@ -55,7 +79,22 @@ namespace eskada
         }
 
         [[nodiscard]]
+        bool isFull()
+            const noexcept
+        {
+            return front == (back + 1) % REAL_SIZE;
+        }
+
+        [[nodiscard]]
+        bool isEmpty()
+            const noexcept
+        {
+            return (front + 1) % REAL_SIZE == back;
+        }
+
+        [[nodiscard]]
         size_t targetIndex(EventDeqOp op)
+            const noexcept
         {
             switch (op)
             {
@@ -67,6 +106,23 @@ namespace eskada
                 return (front + 1) % REAL_SIZE;
             case EventDeqOp::POP_BACK:
                 return (back - 1 + REAL_SIZE) % REAL_SIZE;
+            default:
+                return 0;
+            }
+        }
+
+        [[nodiscard]]
+        size_t currentIndex(EventDeqOp op)
+            const noexcept
+        {
+            switch (op)
+            {
+            case EventDeqOp::PUSH_FRONT:
+            case EventDeqOp::POP_FRONT:
+                return front;
+            case EventDeqOp::PUSH_BACK:
+            case EventDeqOp::POP_BACK:
+                return back;
             default:
                 return 0;
             }
@@ -227,6 +283,7 @@ namespace eskada
             IndexType*& oldIndex,
             IndexType& oldIndexVal,
             IndexType& newIndexVal)
+            const
         {
             oldIndex = raw->loadIndex();
             if (oldIndex == nullptr)
@@ -236,6 +293,19 @@ namespace eskada
             newIndexVal = oldIndexVal.move(record.op);
 
             return oldIndexVal.isValid() && newIndexVal.isValid();
+        }
+
+        [[nodiscard]]
+        bool isNotProgressed(
+            const RecordType& record,
+            const IndexType& oldIndexVal)
+        {
+            IndexType prevIndexVal = oldIndexVal.prev(record.op);
+            Task* currTask = raw->loadTask(oldIndexVal.currentIndex(record.op));
+            Task* prevTask = raw->loadTask(prevIndexVal.currentIndex(record.op));
+
+            return currTask == nullptr &&
+                (oldIndexVal.isEmpty() || prevTask != nullptr);
         }
 
         [[nodiscard]]
@@ -274,6 +344,7 @@ namespace eskada
         }
 
         void updateTLS(IndexType*& oldIndex)
+            const
         {
             if (oldIndex == nullptr)
                 std::abort();
