@@ -412,6 +412,13 @@ void testEventDeqLF()
                         return;
                     }
 
+                    if (!base.isNotProgressed(record, oldIndexVal))
+                    {
+                        record.state = EventDeqRecordState::RESTART;
+
+                        return;
+                    }
+
                     size_t idx = oldIndexVal.targetIndex(record.op);
                     if (!base.tryCommitTask(record, idx))
                     {
@@ -433,7 +440,8 @@ void testEventDeqLF()
 
                     record.state = EventDeqRecordState::COMPLETED;
                 }
-                }) })
+                })
+            })
         {
             auto& [name, f] = args;
 
@@ -487,6 +495,13 @@ void testEventDeqLF()
                         return;
                     }
 
+                    if (!base.isNotProgressed(record, oldIndexVal))
+                    {
+                        record.state = EventDeqRecordState::RESTART;
+
+                        return;
+                    }
+
                     size_t idx = oldIndexVal.targetIndex(record.op);
                     raw.storeTask(idx, &y);
                     if (!base.tryCommitTask(record, idx))
@@ -516,6 +531,13 @@ void testEventDeqLF()
                         return;
                     }
 
+                    if (!base.isNotProgressed(record, oldIndexVal))
+                    {
+                        record.state = EventDeqRecordState::RESTART;
+
+                        return;
+                    }
+
                     size_t idx = oldIndexVal.targetIndex(record.op);
                     if (!base.tryCommitTask(record, idx))
                     {
@@ -538,7 +560,8 @@ void testEventDeqLF()
 
                     record.state = EventDeqRecordState::COMPLETED;
                 }
-                }) })
+                })
+            })
         {
             auto& [name, f] = args;
 

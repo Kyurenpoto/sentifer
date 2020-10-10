@@ -400,6 +400,13 @@ namespace eskada
                 return;
             }
 
+            if (!base->isNotProgressed(record, oldIndexVal))
+            {
+                record.state = EventDeqRecordState::RESTART;
+
+                return;
+            }
+
             size_t idx = oldIndexVal.targetIndex(record.op);
             if (!base->tryCommitTask(record, idx))
             {
