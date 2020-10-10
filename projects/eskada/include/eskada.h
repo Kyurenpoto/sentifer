@@ -177,14 +177,6 @@ namespace eskada
         std::atomic<EventDeqRecordState> state = EventDeqRecordState::PENDING;
     };
 
-    template<class Task, size_t REAL_SIZE>
-    struct EventDeqRecordBox
-    {
-        using RecordType = EventDeqRecord<Task, REAL_SIZE>;
-
-        RecordType* record = nullptr;
-    };
-
     template<class Task, size_t MAX_SIZE>
     struct EventDeqRaw
     {
@@ -194,7 +186,6 @@ namespace eskada
     public:
         using IndexType = EventDeqIndex<REAL_SIZE>;
         using RecordType = EventDeqRecord<Task, REAL_SIZE>;
-        using RecordBoxType = EventDeqRecordBox<Task, REAL_SIZE>;
 
     private:
         std::atomic<IndexType*> index = nullptr;
@@ -257,7 +248,6 @@ namespace eskada
         using RawType = EventDeqRaw<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
         using RecordType = typename RawType::RecordType;
-        using RecordBoxType = typename RawType::RecordBoxType;
 
     private:
         RawType* raw;
@@ -430,26 +420,89 @@ namespace eskada
         }
     };
 
-    template<class RecordBoxType, size_t MAX_SIZE>
+    template<class RecordType, size_t MAX_SIZE>
     struct HelpQueue
     {
-        using RecordType = typename RecordBoxType::RecordType;
+    private:
+        static constexpr size_t REAL_SIZE = MAX_SIZE + 1;
 
+        std::array<std::atomic<RecordType*>, REAL_SIZE> items;
+        std::atomic<size_t> enqIdx = 0;
+        std::atomic<size_t> deqIdx = 0;
+
+    public:
         [[nodiscard]]
         bool enqueue(RecordType* const record)
         {
+            size_t oldEnqIdx = loadEnqIdx();
+            size_t oldDeqIdx = loadDeqIdx();
+            for (size_t i = oldEnqIdx;
+                (i + 1) % REAL_SIZE != oldDeqIdx;
+                i = (i + 1) % REAL_SIZE)
+            {
+                RecordType* oldRecord = loadItem(i);
+                if (oldRecord != nullptr)
+                    continue;
 
+                RecordType* oldRecord = nullptr;
+                if (casItem(items[i], oldRecord, record))
+                    return true;
+            }
+
+            return false;
         }
 
         [[nodiscard]]
-        RecordBoxType* peek()
+        std::atomic<RecordType*>* peek()
         {
+            size_t oldEnqIdx = loadEnqIdx();
+            size_t oldDeqIdx = loadDeqIdx();
+            for (size_t i = oldDeqIdx; i != oldEnqIdx; i = (i + 1) % REAL_SIZE)
+            {
+                RecordType* oldRecord = loadItem(i);
+                if (oldRecord != nullptr)
+                    return &items[i];
+            }
 
+            return nullptr;
         }
 
-        void dequeue(RecordBoxType* const obx)
+        void dequeue(std::atomic<RecordType*>* peeked, RecordType* const record)
         {
+            if (peeked != nullptr)
+            {
+                std::atomic<RecordType*>& item = *peeked;
+                RecordType* oldRecord = record;
+                casItem(item, oldRecord, nullptr);
+            }
+        }
 
+    private:
+        [[nodiscard]]
+        size_t loadEnqIdx()
+        {
+            return enqIdx.load(std::memory_order_acquire);
+        }
+
+        [[nodiscard]]
+        size_t loadDeqIdx()
+        {
+            return deqIdx.load(std::memory_order_acquire);
+        }
+
+        [[nodiscard]]
+        RecordType* loadItem(size_t idx)
+        {
+            return items[idx].load(std::memory_order_acquire);
+        }
+
+        bool casItem(
+            std::atomic<RecordType*>& item,
+            RecordType*& oldItem,
+            const RecordType* newItem)
+        {
+            return item.compare_exchange_strong(
+                oldItem, newItem, std::memory_order_acq_rel);
         }
     };
 
@@ -460,7 +513,6 @@ namespace eskada
         using BaseType = EventDeqBase<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
         using RecordType = typename RawType::RecordType;
-        using RecordBoxType = typename RawType::RecordBoxType;
 
     private:
         BaseType* base;
@@ -485,17 +537,17 @@ namespace eskada
 
         }
 
-        void help(bool beingHelped, RecordBoxType* box)
+        void help(bool beingHelped, std::atomic<RecordType*>& box)
         {
 
         }
 
-        void doHelpOp(RecordBoxType* box)
+        void doHelpOp(std::atomic<RecordType*>& box)
         {
 
         }
 
-        void preCASes(RecordBoxType* box, RecordType* record)
+        void preCASes(std::atomic<RecordType*>& box, RecordType* record)
         {
 
         }
@@ -505,7 +557,7 @@ namespace eskada
 
         }
 
-        void postCASes(RecordBoxType* box, RecordType* record)
+        void postCASes(std::atomic<RecordType*>& box, RecordType* record)
         {
 
         }
