@@ -148,7 +148,7 @@ namespace eskada
     template<class Task>
     struct EventDeqTaskDesc
     {
-        std::atomic<Task*>* target;
+        std::atomic<Task*>* target = nullptr;
         Task* oldTask = nullptr;
         Task* newTask = nullptr;
         EventDeqCASState state = EventDeqCASState::PENDING;
@@ -159,7 +159,7 @@ namespace eskada
     {
         using IndexType = EventDeqIndex<REAL_SIZE>;
 
-        std::atomic<IndexType*>* target;
+        std::atomic<IndexType*>* target = nullptr;
         IndexType* oldIndex = nullptr;
         IndexType* newIndex = nullptr;
         EventDeqCASState state = EventDeqCASState::PENDING;
@@ -177,6 +177,30 @@ namespace eskada
         std::atomic<EventDeqRecordState> state = EventDeqRecordState::PENDING;
     };
 
+    template<class Task, size_t REAL_SIZE>
+    struct EventDeqRecordBox
+    {
+        using RecordType = EventDeqRecord<Task, REAL_SIZE>;
+
+        std::atomic<RecordType*> record = nullptr;
+
+        bool casRecord(RecordType*& oldRecord, RecordType* const newRecord)
+        {
+            return record.compare_exchange_strong(
+                oldRecord, newRecord, std::memory_order_acq_rel);
+        }
+
+        RecordType* loadRecord()
+        {
+            return record->load(std::memory_order_acquire);
+        }
+
+        void storeRecord(Record* const newRecord)
+        {
+            record.store(newRecord, std::memory_order_release);
+        }
+    };
+
     template<class Task, size_t MAX_SIZE>
     struct EventDeqRaw
     {
@@ -186,10 +210,10 @@ namespace eskada
     public:
         using IndexType = EventDeqIndex<REAL_SIZE>;
         using RecordType = EventDeqRecord<Task, REAL_SIZE>;
+        using RecordBoxType = EventDeqRecordBox<Task, REAL_SIZE>;
 
     private:
         std::atomic<IndexType*> index = nullptr;
-        std::atomic<RecordType*> registered = nullptr;
         std::array<std::atomic<Task*>, REAL_SIZE> tasks{ nullptr };
 
     public:
@@ -206,7 +230,13 @@ namespace eskada
 
         void storeTask(size_t idx, Task* const task)
         {
-            tasks[idx].store(task, std::memory_order::release);
+            tasks[idx].store(task, std::memory_order_release);
+        }
+
+        std::atomic<Task*>* targetTask(size_t idx)
+            const noexcept
+        {
+            return &tasks[idx];
         }
 
         bool casIndex(IndexType*& oldIndex, IndexType* const newIndex)
@@ -222,24 +252,20 @@ namespace eskada
 
         void storeIndex(IndexType* const idx)
         {
-            index.store(idx, std::memory_order::release);
+            index.store(idx, std::memory_order_release);
         }
 
-        bool casDesc(RecordType*& oldDesc, RecordType* const newDesc)
+        std::atomic<IndexType*>* targetIndex()
+            const noexcept
         {
-            return registered.compare_exchange_strong(
-                oldDesc, newDesc, std::memory_order_acq_rel);
+            return &index;
         }
+    };
 
-        RecordType* loadDesc()
-        {
-            return registered.load(std::memory_order_acquire);
-        }
-
-        void storeDesc(RecordType* const record)
-        {
-            registered.store(record, std::memory_order::release);
-        }
+    struct ThreadLocalStorage
+    {
+        inline thread_local static void* index = nullptr;
+        inline thread_local static void* record = nullptr;
     };
 
     template<class Task, size_t MAX_SIZE>
@@ -248,6 +274,7 @@ namespace eskada
         using RawType = EventDeqRaw<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
         using RecordType = typename RawType::RecordType;
+        using RecordBoxType = typename RawType::RecordBoxType;
 
     private:
         RawType* raw;
@@ -420,19 +447,18 @@ namespace eskada
         }
     };
 
-    template<class RecordType, size_t MAX_SIZE>
+    template<class RecordBoxType, size_t MAX_SIZE>
     struct HelpQueue
     {
     private:
         static constexpr size_t REAL_SIZE = MAX_SIZE + 1;
 
-        std::array<std::atomic<RecordType*>, REAL_SIZE> items;
+        std::array<std::atomic<RecordBoxType*>, REAL_SIZE> items;
         std::atomic<size_t> enqIdx = 0;
         std::atomic<size_t> deqIdx = 0;
 
     public:
-        [[nodiscard]]
-        bool enqueue(RecordType* const record)
+        void enqueue(RecordBoxType* const box)
         {
             size_t oldEnqIdx = loadEnqIdx();
             size_t oldDeqIdx = loadDeqIdx();
@@ -440,41 +466,43 @@ namespace eskada
                 (i + 1) % REAL_SIZE != oldDeqIdx;
                 i = (i + 1) % REAL_SIZE)
             {
-                RecordType* oldRecord = loadItem(i);
-                if (oldRecord != nullptr)
+                RecordBoxType* oldRecordBox = loadItem(i);
+                if (oldRecordBox != nullptr)
                     continue;
 
-                RecordType* oldRecord = nullptr;
-                if (casItem(items[i], oldRecord, record))
-                    return true;
-            }
+                if (casItem(items[i], oldRecordBox, box))
+                {
+                    faaEnqIdx();
 
-            return false;
+                    return;
+                }
+            }
         }
 
         [[nodiscard]]
-        std::atomic<RecordType*>* peek()
+        RecordBoxType* peek()
         {
             size_t oldEnqIdx = loadEnqIdx();
             size_t oldDeqIdx = loadDeqIdx();
             for (size_t i = oldDeqIdx; i != oldEnqIdx; i = (i + 1) % REAL_SIZE)
             {
-                RecordType* oldRecord = loadItem(i);
-                if (oldRecord != nullptr)
-                    return &items[i];
+                RecordBoxType* oldRecordBox = loadItem(i);
+                if (oldRecordBox != nullptr)
+                    return oldRecordBox;
             }
 
             return nullptr;
         }
 
-        void dequeue(std::atomic<RecordType*>* peeked, RecordType* const record)
+        void dequeue(RecordBoxType* const box)
         {
-            if (peeked != nullptr)
-            {
-                std::atomic<RecordType*>& item = *peeked;
-                RecordType* oldRecord = record;
-                casItem(item, oldRecord, nullptr);
-            }
+            size_t oldDeqIdx = loadDeqIdx();
+            RecordBoxType* oldRecordBox = loadItem(oldDeqIdx);
+            if (oldRecordBox == nullptr || oldRecordBox != box)
+                return;
+
+            casItem(items[i], oldRecordBox, nullptr);
+            faaDeqIdx();
         }
 
     private:
@@ -484,22 +512,46 @@ namespace eskada
             return enqIdx.load(std::memory_order_acquire);
         }
 
+        void faaEnqIdx()
+        {
+            while (true)
+            {
+                size_t oldEnqIdx = loadEnqIdx();
+                size_t newEnqIdx = (oldEnqIdx + 1) % REAL_SIZE;
+                if (enqIdx.compare_exchange_strong(
+                    oldEnqIdx, newEnqIdx, std::memory_order_acq_rel))
+                    return;
+            }
+        }
+
         [[nodiscard]]
         size_t loadDeqIdx()
         {
             return deqIdx.load(std::memory_order_acquire);
         }
 
+        void faaDeqIdx()
+        {
+            while (true)
+            {
+                size_t oldDeqIdx = loadEnqIdx();
+                size_t newDeqIdx = (oldDeqIdx + 1) % REAL_SIZE;
+                if (enqIdx.compare_exchange_strong(
+                    oldDeqIdx, newDeqIdx, std::memory_order_acq_rel))
+                    return;
+            }
+        }
+
         [[nodiscard]]
-        RecordType* loadItem(size_t idx)
+        RecordBoxType* loadItem(size_t idx)
         {
             return items[idx].load(std::memory_order_acquire);
         }
 
         bool casItem(
-            std::atomic<RecordType*>& item,
-            RecordType*& oldItem,
-            const RecordType* newItem)
+            std::atomic<RecordBoxType*>& item,
+            RecordBoxType*& oldItem,
+            const RecordBoxType* newItem)
         {
             return item.compare_exchange_strong(
                 oldItem, newItem, std::memory_order_acq_rel);
@@ -513,9 +565,12 @@ namespace eskada
         using BaseType = EventDeqBase<Task, MAX_SIZE>;
         using IndexType = typename RawType::IndexType;
         using RecordType = typename RawType::RecordType;
+        using RecordBoxType = typename RawType::RecordBoxType;
+        using HelpQueueType = HelpQueue<Task, MAX_SIZE>;
 
     private:
         BaseType* base;
+        HelpQueueType helper;
 
     public:
         EventDeqWF(BaseType* base_) :
