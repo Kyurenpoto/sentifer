@@ -168,13 +168,46 @@ namespace eskada
     template<class Task, size_t REAL_SIZE>
     struct EventDeqRecord
     {
+        using TaskDescType = EventDeqTaskDesc<Task>;
+        using IndexDescType = EventDeqIndexDesc<REAL_SIZE>;
+
         Task* input = nullptr;
         Task* output = nullptr;
         size_t ownerTid = 0;
-        EventDeqTaskDesc<Task>* taskDesc = nullptr;
-        EventDeqIndexDesc<REAL_SIZE>* indexDesc = nullptr;
+        TaskDescType* taskDesc;
+        IndexDescType* indexDesc;
         EventDeqOp op = EventDeqOp::PUSH_BACK;
-        std::atomic<EventDeqRecordState> state = EventDeqRecordState::PENDING;
+        EventDeqRecordState state = EventDeqRecordState::PENDING;
+
+        void toPending(EventDeqRecord* const oldRecord)
+            noexcept
+        {
+            ownerTid = oldRecord->ownerTid;
+            input = oldRecord->input;
+            output = nullptr;
+            op = oldRecord->op;
+            state = EventDeqRecordState::PENDING;
+        }
+
+        void toCompleted(EventDeqRecord* const oldRecord)
+            noexcept
+        {
+            ownerTid = oldRecord->ownerTid;
+            input = oldRecord->input;
+            output = record->taskDesc->oldTask;
+            op = oldRecord->op;
+            state = EventDeqRecordState::COMPLETED;
+        }
+
+        void toRestart(EventDeqRecord* const oldRecord)
+            noexcept
+        {
+            ownerTid = oldRecord->ownerTid;
+            input = oldRecord->input;
+            output = nullptr;
+            op = oldRecord->op;
+            state = EventDeqRecordState::RESTART;
+        }
     };
 
     template<class Task, size_t REAL_SIZE>
@@ -369,11 +402,21 @@ namespace eskada
             oldIndex->~IndexType();
             ThreadLocalStorage::index = static_cast<void*>(oldIndex);
         }
-    };
 
-    struct ThreadLocalStorage
-    {
-        inline thread_local static void* index = nullptr;
+        void configDesc(RecordType*& oldRecord, const size_t idx)
+            const noexcept
+        {
+            RecordType* newRecord =
+                static_cast<RecordType*>(ThreadLocalStorage::record);
+            if (newRecord == nullptr)
+                std::abort();
+
+            newRecord->toPending(oldRecord);
+            newRecord->taskDesc->target = raw->targetTask(idx);
+            newRecord->taskDesc->state = EventDeqRecordState::PENDING;
+            newRecord->indexDesc->target = raw->targetIndex();
+            newRecord->indexDesc->state = EventDeqRecordState::PENDING;
+        }
     };
 
     template<class Task, size_t MAX_SIZE>
@@ -592,19 +635,65 @@ namespace eskada
 
         }
 
-        void help(bool beingHelped, std::atomic<RecordType*>& box)
+        void help(bool beingHelped, RecordBoxType* const box)
         {
+            while (true)
+            {
+                RecordBoxType* peaked = helper.peek();
+                if (peaked != nullptr)
+                    doHelpOp(peaked);
+                
+                if (!beingHelped || box == nullptr)
+                    return;
 
+                RecordType* oldRecord = box->loadRecord();
+                if (oldRecord != nullptr &&
+                    oldRecord->state == EventDeqRecordState::COMPLETED)
+                    return;
+            }
         }
 
-        void doHelpOp(std::atomic<RecordType*>& box)
+        void doHelpOp(RecordBoxType* const box)
         {
+            RecordType* record = nullptr;
+            do
+            {
+                record = box->loadRecord();
+                if (record == nullptr)
+                    return;
 
+                if (record->state == EventDeqRecordState::RESTART)
+                    preCASes(box, record);
+                if (record->state == EventDeqRecordState::PENDING)
+                {
+                    executeCASes(record);
+                    postCASes(box, record);
+                }
+            } while (record->state != EventDeqRecordState::COMPLETED);
+
+            helper.dequeue(box);
         }
 
-        void preCASes(std::atomic<RecordType*>& box, RecordType* record)
+        void preCASes(RecordBoxType* const box, RecordType* record)
         {
+            if (record == nullptr)
+                return;
 
+            RecordType& recordValue = *record;
+            if (recordValue.state != EventDeqRecordState::RESTART)
+                return;
+
+            IndexType* oldIndex = nullptr;
+            IndexType oldIndexVal;
+            IndexType newIndexVal;
+            if (!base->isValidIndex(recordValue, oldIndex, oldIndexVal, newIndexVal))
+                return;
+
+            if (!base->isNotProgressed(recordValue, oldIndexVal))
+                return;
+
+            base->configDesc(record, oldIndexVal.targetIndex());
+            box->casRecord(record, ThreadLocalStorage::record);
         }
 
         void executeCASes(RecordType* record)
@@ -612,9 +701,19 @@ namespace eskada
 
         }
 
-        void postCASes(std::atomic<RecordType*>& box, RecordType* record)
+        void postCASes(RecordBoxType* const box, RecordType* record)
         {
+            RecordType* newRecord =
+                static_cast<RecordType*>(ThreadLocalStorage::record);
+            if (newRecord == nullptr)
+                std::abort();
 
+            if (record->indexDesc->state == EventDeqCASState::SUCCESS)
+                newRecord->toCompleted();
+            else
+                newRecord->toRestart();
+
+            box->casRecord(record, ThreadLocalStorage::record);
         }
     };
 }
